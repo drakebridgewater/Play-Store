@@ -1,0 +1,14 @@
+{
+  "name": "play-store",
+  "version": "1.0.0",
+  "description": "A pretend-play cash register with a kitchen order queue. No dependencies.",
+  "private": true,
+  "main": "server.js",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "DATA_DIR=./data PORT=8089 node --watch server.js",
+    "icons": "node scripts/make-icons.js"
+  },
+  "license": "MIT"
+}

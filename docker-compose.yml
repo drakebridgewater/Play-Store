@@ -1,0 +1,35 @@
+# Play Store POS. Edit SETUP_PIN, the Host() rule and the network, then:
+#   docker compose up -d --build
+name: playstore
+
+services:
+  playstore:
+    container_name: playstore
+    build: .
+    image: playstore:local
+    restart: unless-stopped
+    user: "99:100"                      # Unraid nobody:users
+    environment:
+      TZ: America/Los_Angeles
+      SETUP_PIN: ${SETUP_PIN:-1234}     # grown-up PIN for Setup
+    volumes:
+      - /mnt/user/appdata/playstore:/data   # db.json + photos/
+    # No Traefik? Use this instead and open http://<server-ip>:8089
+    # ports: ["8089:8080"]
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.playstore.rule: Host(`play.example.com`)
+      traefik.http.routers.playstore.entrypoints: https
+      traefik.http.routers.playstore.tls: "true"
+      traefik.http.routers.playstore.middlewares: playstore-lan
+      traefik.http.routers.playstore.service: playstore
+      traefik.http.services.playstore.loadbalancer.server.port: "8080"
+      # LAN-only: there are no accounts, so keep it off the internet.
+      traefik.http.middlewares.playstore-lan.ipallowlist.sourcerange: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+networks:
+  proxy:
+    external: true

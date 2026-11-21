@@ -12,12 +12,22 @@ A pretend-play register for kids. It has multiple mini stores, a cashier screen,
 ## Modes
 | Mode | Who | What |
 |---|---|---|
-| ⚙️ **Setup** | Grown-ups (PIN) | Create stores from templates (Coffee, Sandwich, Tech, My Own Shop, Blank), edit categories, items, emoji, photos, prices, tax, play-money toggle, customer names |
+| ⚙️ **Setup** | Grown-ups (PIN) | Create stores from templates (Coffee, Sandwich, Tech, My Own Shop, Blank), edit categories, items, pictures, photos, prices, sale prices, tax, play-money toggle, store look (plain or electronics), fresh menu from a template |
 | 🧾 **Cashier** | Ethan | Pick who it's for, tap items (qty +/−), see subtotal / tax / total, **Send Order** → pay with play bills and coins, see exactly what change to give back. **Pay later** is also an option. **➕ Add my item** lets him sell his own stuff (photo or emoji, name, price) with no PIN |
+| 🙂 **People** | Anyone | Add, rename or remove customers, with an emoji or a photo from the tablet camera. No PIN |
 | 👨‍🍳 **Orders** | Ethan (kitchen) | **Things to make** list totals every item across open orders. Order cards move New → Making → Ready → Delivered, and tapping an item ticks it off |
 
 ### Selling his own stuff
 The **➕ Add my item** tile on the Cashier screen opens a big kid-friendly form: take a photo with the tablet camera (or pick an emoji), type a name, and set the price with +/− buttons. New items land in a **⭐ My Stuff** category unless he picks another one. Items he adds get a ✏️ button so he can change or remove them later. Store items made in Setup stay PIN-protected.
+
+### Custom sandwiches and drinks
+The Sandwich and Coffee templates have a **Build a sandwich** / **Make a drink** tile, plus presets (Grilled Cheese, Caffè Latte, …) that are just saved recipes.
+- **Sandwich:** white or brown bread, toast it, then stack up to 8 fillings (yellow or white cheese, ham, turkey, bacon, egg, lettuce, tomato, onions, pickles, mayo, mustard, peanut butter, jelly). The picture labels each layer.
+- **Drink:** a cut-away cup like a barista chart. Pick a size and hot or iced, then fill up to 6 parts (espresso, steamed milk, milk foam, hot water, chocolate, caramel, tea), each drawn as a labelled band. Add toppings (whipped cream, marshmallows, sprinkles). It recognises classics ("It's a Cappuccino!") and names the drink.
+- The server names and prices every custom order from the recipe (rules in `public/art.js`), and the kitchen card shows the picture plus the build list.
+
+### Pictures
+Items use hand-drawn SVGs from `public/art.js` (food, drinks, electronics), or a photo, or an emoji. The **Add my item** picker lists the drawings first.
 
 Typical flow: take everyone's orders on the tablet → run to his room → open **Orders** → make what's on the "Things to make" list → tap **Ready!** → deliver.
 
@@ -44,15 +54,16 @@ Prices and money are in cents.
 - `GET /api/state`: stores and customers
 - `GET /api/events`: Server-Sent Events, `change` fires on every write (this is how devices stay in sync)
 - `GET /api/orders?storeId=`: open orders plus the last 12 hours of delivered ones
-- `POST /api/orders {storeId, customer, customerEmoji?, lines:[{itemId, qty}], paid?, tendered?}`
+- `POST /api/orders {storeId, customer, customerEmoji?, customerPhoto?, lines:[{itemId, qty, recipe?}], paid?, tendered?}`. `recipe` is for builder items, and the server sets the line's name and price
 - `PATCH /api/orders/:id {status | toggleLine | pay:{tendered}}`, `DELETE /api/orders/:id`
 - `POST /api/stores/:id/items {name, emoji, price, categoryId?, photo?}` (photo is a data: URL). Items added without the PIN stay editable without it (`PUT`/`DELETE /api/stores/:id/items/:itemId`)
-- `POST /api/customers {name, emoji}`
+- `POST /api/customers {name, emoji, photo?}`, `PUT`/`DELETE /api/customers/:id` (no PIN)
 
-Setup writes (`POST/PUT/DELETE /api/stores`, `PUT /api/customers`, `DELETE /api/orders?status=delivered|all`) need the `x-setup-pin` header.
+Setup writes (`POST/PUT/DELETE /api/stores`, `POST /api/stores/:id/reset {template}`, `PUT /api/customers`, `DELETE /api/orders?status=delivered|all`) need the `x-setup-pin` header.
 
 ## Ideas
 - [x] Item photos instead of emoji
+- [x] Drawn item pictures, custom sandwich/drink builder, people photos
 - [ ] Stock counts per item ("sold out!")
 - [ ] Bluetooth barcode scanner → item lookup
 - [ ] HA notification or a light flash when an order is marked **Ready**

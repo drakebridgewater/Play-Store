@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { makeStore, templateList } = require('./templates');
+const { makeStore, templateList, hasTemplate } = require('./templates');
+const Art = require('./public/art.js');
 
 const PORT = Number(process.env.PORT) || 8080;
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -129,16 +130,27 @@ async function resolvePhoto(input, prev) {
   return prev?.photo || null;
 }
 
+const isPhotoPath = (v) => typeof v === 'string' && /^\/photos\/[a-z0-9]+\.(jpg|png|webp)$/.test(v);
+
 async function normItem(b, prev, catIds, fallbackCat, addedBy) {
   const name = clean(b.name, 40);
   if (!name) throw new HttpError(400, 'Every item needs a name');
+  // Builder items (custom sandwiches/drinks) price themselves from their recipe.
+  const builder = Art.BUILDERS[b.builder] ? b.builder : null;
+  const recipe = builder && b.recipe ? Art.normRecipe(builder, b.recipe) : null;
+  const price = builder ? (recipe ? Art.priceOf(builder, recipe) : Art.startPrice(builder)) : cents(b.price);
+  const was = b.wasPrice ? cents(b.wasPrice) : 0;
   return {
     id: prev?.id || newId(),
     categoryId: catIds.has(b.categoryId) ? b.categoryId : fallbackCat,
     name,
     emoji: clean(b.emoji, 16) || '🏷️',
+    icon: Object.prototype.hasOwnProperty.call(Art.ICONS, b.icon) ? b.icon : null,
     photo: await resolvePhoto(b.photo, prev),
-    price: cents(b.price),
+    price,
+    wasPrice: !builder && was > price ? was : null,
+    builder,
+    recipe,
     addedBy: prev?.addedBy || addedBy,
   };
 }
@@ -149,6 +161,7 @@ async function normStore(b, old) {
     name: clean(b.name, 40) || 'My Store',
     emoji: clean(b.emoji, 16) || '🏪',
     color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#16a34a',
+    theme: b.theme === 'electronics' ? 'electronics' : 'plain',
     taxRate: clamp(Math.round((Number(b.taxRate) || 0) * 100) / 100, 0, 50),
     playMoney: b.playMoney !== false,
     categories: [],
@@ -232,7 +245,14 @@ async function api(req, res, url) {
       const item = store.items.find((i) => i.id === l.itemId);
       const qty = clamp(Math.round(Number(l.qty) || 0), 0, 99);
       if (!item || !qty) continue;
-      lines.push({ itemId: item.id, name: item.name, emoji: item.emoji, photo: item.photo, price: item.price, qty, done: false });
+      const line = { itemId: item.id, name: item.name, emoji: item.emoji, icon: item.icon || null, photo: item.photo, price: item.price, qty, done: false };
+      if (item.builder) {
+        // Custom order: the server names and prices it from the recipe, never from the client.
+        const recipe = Art.normRecipe(item.builder, l.recipe || item.recipe || Art.SAMPLE[item.builder]);
+        const same = item.recipe && Art.recipeKey(item.builder, item.recipe) === Art.recipeKey(item.builder, recipe);
+        Object.assign(line, { builder: item.builder, recipe, price: Art.priceOf(item.builder, recipe), name: same ? item.name : Art.nameOf(item.builder, recipe) });
+      }
+      lines.push(line);
     }
     if (!lines.length) throw new HttpError(400, 'The order is empty');
     const subtotal = lines.reduce((sum, l) => sum + l.price * l.qty, 0);
@@ -243,6 +263,7 @@ async function api(req, res, url) {
     const order = {
       id: newId(), number: db.nextOrderNumber++, storeId: store.id,
       customer: clean(b.customer, 30) || 'Someone', customerEmoji: clean(b.customerEmoji, 16) || '🙂',
+      customerPhoto: isPhotoPath(b.customerPhoto) ? b.customerPhoto : null,
       lines, subtotal, tax, total, paid,
       ...(paid ? computeChange(total, b.tendered) : { tendered: null, change: null }),
       status: 'new', createdAt: now, updatedAt: now,
@@ -304,6 +325,24 @@ async function api(req, res, url) {
     return send(res, 201, store);
   }
 
+  if (parts[1] === 'stores' && parts[3] === 'reset' && parts.length === 4 && method === 'POST') {
+    // Fresh menu from a template; keeps the store's id, name, tax, money setting and kid items.
+    requirePin(req);
+    const store = findStore(parts[2]);
+    const b = await readJson(req);
+    if (!hasTemplate(b.template)) throw new HttpError(400, 'Unknown template');
+    const fresh = makeStore(b.template, newId);
+    const next = { ...fresh, id: store.id, name: store.name, taxRate: store.taxRate, playMoney: store.playMoney };
+    const kids = store.items.filter((i) => i.addedBy === 'kid');
+    if (kids.length) {
+      const cat = myStuffCategory(next);
+      next.items.push(...kids.map((i) => ({ ...i, categoryId: cat })));
+    }
+    db.stores[db.stores.indexOf(store)] = next;
+    persist('state');
+    return send(res, 200, next);
+  }
+
   if (parts[1] === 'stores' && parts.length === 3) {
     const store = findStore(parts[2]);
     if (method === 'PUT') {
@@ -353,24 +392,45 @@ async function api(req, res, url) {
   }
 
   // ---- customers
+  // People are managed from the home screen without the PIN (it's pretend play).
   if (pathname === '/api/customers' && method === 'POST') {
     const b = await readJson(req);
     const name = clean(b.name, 30);
     if (!name) throw new HttpError(400, 'Name needed');
     let c = db.customers.find((x) => x.name.toLowerCase() === name.toLowerCase());
     if (!c) {
-      c = { id: newId(), name, emoji: clean(b.emoji, 16) || '🙂' };
+      if (db.customers.length >= 100) throw new HttpError(400, 'That is a lot of people already');
+      c = { id: newId(), name, emoji: clean(b.emoji, 16) || '🙂', photo: await resolvePhoto(b.photo, null) };
       db.customers.push(c);
       persist('state');
     }
     return send(res, 201, c);
   }
 
+  if (parts[1] === 'customers' && parts.length === 3) {
+    const c = db.customers.find((x) => x.id === parts[2]);
+    if (!c) throw new HttpError(404, 'Person not found');
+    if (method === 'PUT') {
+      const b = await readJson(req);
+      const name = clean(b.name, 30);
+      if (!name) throw new HttpError(400, 'Name needed');
+      Object.assign(c, { name, emoji: clean(b.emoji, 16) || '🙂', photo: await resolvePhoto(b.photo, c) });
+      persist('state');
+      return send(res, 200, c);
+    }
+    if (method === 'DELETE') {
+      db.customers = db.customers.filter((x) => x !== c);
+      persist('state');
+      return send(res, 200, { ok: true });
+    }
+  }
+
   if (pathname === '/api/customers' && method === 'PUT') {
     requirePin(req);
     const b = await readJson(req);
-    db.customers = (Array.isArray(b) ? b : []).slice(0, 50)
-      .map((c) => ({ id: isId(c.id) ? c.id : newId(), name: clean(c.name, 30), emoji: clean(c.emoji, 16) || '🙂' }))
+    const old = new Map(db.customers.map((c) => [c.id, c]));
+    db.customers = (Array.isArray(b) ? b : []).slice(0, 100)
+      .map((c) => ({ id: isId(c.id) ? c.id : newId(), name: clean(c.name, 30), emoji: clean(c.emoji, 16) || '🙂', photo: old.get(c.id)?.photo || null }))
       .filter((c) => c.name);
     persist('state');
     return send(res, 200, db.customers);

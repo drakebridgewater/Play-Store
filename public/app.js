@@ -7,8 +7,8 @@ const $toast = document.getElementById('toast');
 
 const S = { stores: [], customers: [], templates: [], orders: [], loaded: false };
 const ui = {
-  cart: { storeId: null, lines: {} }, // itemId -> qty
-  customer: null,                      // { name, emoji }
+  cart: { storeId: null, lines: {} }, // key -> { itemId, qty, recipe }
+  customer: null,                      // { name, emoji, photo }
   askedCustomer: false,
   cat: 'all',
   pin: ssGet('pin'),
@@ -17,7 +17,6 @@ const ui = {
   seen: null,
   fresh: new Set(),
   draft: null, dirty: false,           // store being edited in Setup
-  custDraft: null, custDirty: false,
   modal: null,
 };
 
@@ -44,10 +43,16 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 const route = () => { const [view = '', a = '', b = ''] = location.hash.replace(/^#\/?/, '').split('/'); return { view, a, b }; };
 const setAccent = (c) => document.documentElement.style.setProperty('--accent', c || '#ff7a45');
 
-function art(x) {
-  return x.photo
-    ? `<img class="art-img" src="${esc(x.photo)}" alt="" data-emoji="${esc(x.emoji)}" loading="lazy">`
-    : esc(x.emoji);
+// Picture for an item, cart line or order line: photo > custom-order drawing > drawn icon > emoji.
+function art(x, opts) {
+  if (x.photo) return `<img class="art-img" src="${esc(x.photo)}" alt="" data-emoji="${esc(x.emoji || '🏷️')}" loading="lazy">`;
+  if (x.builder) return Art.draw(x.builder, x.recipe, opts);
+  if (x.icon && Art.ICONS[x.icon]) return Art.icon(x.icon);
+  return esc(x.emoji);
+}
+// A person's face: their photo, else their emoji.
+function face(c) {
+  return c.photo ? `<img class="face-img" src="${esc(c.photo)}" alt="" data-emoji="${esc(c.emoji || '🙂')}">` : esc(c.emoji || '🙂');
 }
 // A missing photo falls back to the item's emoji.
 document.addEventListener('error', (e) => {
@@ -159,8 +164,22 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
 setInterval(refresh, 30_000);
 
 // ------------------------------------------------------------------ modal plumbing
-function openModal(m) { ui.modal = m; $modal.hidden = false; drawModal(); }
-function drawModal() { if (ui.modal) $modal.innerHTML = ui.modal.render(); }
+// Only the first draw animates; redraws keep every scroll position so taps don't flash or jump.
+function openModal(m) {
+  ui.modal = m; $modal.hidden = false;
+  $modal.classList.add('opening');
+  drawModal();
+}
+$modal.addEventListener('animationend', (e) => { if (e.target.classList.contains('sheet')) $modal.classList.remove('opening'); });
+function drawModal() {
+  if (!ui.modal) return;
+  const keep = [...$modal.querySelectorAll('.sheet, [data-scroll]')].map((el) => [el.dataset.scroll || 'sheet', el.scrollTop]);
+  $modal.innerHTML = ui.modal.render();
+  for (const [k, top] of keep) {
+    const el = k === 'sheet' ? $modal.querySelector('.sheet') : $modal.querySelector(`[data-scroll="${k}"]`);
+    if (el) el.scrollTop = top;
+  }
+}
 function closeModal() {
   const m = ui.modal;
   ui.modal = null; $modal.hidden = true; $modal.innerHTML = '';
@@ -184,6 +203,7 @@ function render() {
   if (r.view === 'cashier') html = r.a ? viewCashier(r.a) : viewStorePicker('cashier');
   else if (r.view === 'orders') html = viewOrders(r.a || lsGet('ordersStore') || 'all');
   else if (r.view === 'setup') html = viewSetup(r);
+  else if (r.view === 'people') html = viewPeople();
   else html = viewHome();
   if (html == null) return;
   $app.innerHTML = html;
@@ -205,7 +225,19 @@ function viewHome() {
     <div class="big-buttons">
       <a class="big cashier" href="#/cashier">🧾<span>Cashier</span></a>
       <a class="big orders" href="#/orders">👨‍🍳<span>Orders</span>${open ? `<b class="badge">${open}</b>` : ''}</a>
+      <a class="big people" href="#/people">🙂<span>People</span></a>
       <a class="big setup" href="#/setup">⚙️<span>Setup</span></a>
+    </div>
+  </div>`;
+}
+
+function viewPeople() {
+  setAccent('#9333ea');
+  return bar('🙂 People') + `<div class="setup">
+    <p class="muted center">Tap someone to change their name or picture.</p>
+    <div class="people-grid">
+      ${S.customers.map((c) => `<button class="person" data-act="person" data-id="${c.id}"><span class="pic">${face(c)}</span><span>${esc(c.name)}</span></button>`).join('')}
+      <button class="person add" data-act="person-add"><span class="pic">➕</span><span>Add someone</span></button>
     </div>
   </div>`;
 }
@@ -222,13 +254,28 @@ function viewStorePicker() {
   </div></div>`;
 }
 
+// Custom orders (builder items) get one cart line per recipe; everything else one line per item.
+const lineKey = (item, recipe) => (item.builder ? `${item.id}|${Art.recipeKey(item.builder, recipe || item.recipe || Art.SAMPLE[item.builder])}` : item.id);
+function addLine(item, recipe = null, n = 1) {
+  const key = lineKey(item, recipe);
+  const l = ui.cart.lines[key] || { itemId: item.id, qty: 0, recipe: item.builder ? Art.normRecipe(item.builder, recipe || item.recipe || Art.SAMPLE[item.builder]) : null };
+  l.qty = Math.min(99, l.qty + n);
+  ui.cart.lines[key] = l;
+}
 function cartLines(s) {
-  return Object.entries(ui.cart.lines)
-    .map(([id, q]) => ({ item: s.items.find((i) => i.id === id), q }))
-    .filter((l) => l.item && l.q > 0);
+  return Object.entries(ui.cart.lines).map(([key, l]) => {
+    const item = s.items.find((i) => i.id === l.itemId);
+    if (!item || l.qty <= 0) return null;
+    if (!item.builder) return { key, item, q: l.qty, name: item.name, price: item.price, pic: item };
+    const same = item.recipe && Art.recipeKey(item.builder, item.recipe) === Art.recipeKey(item.builder, l.recipe);
+    return {
+      key, item, q: l.qty, recipe: l.recipe, pic: { builder: item.builder, recipe: l.recipe },
+      name: same ? item.name : Art.nameOf(item.builder, l.recipe), price: Art.priceOf(item.builder, l.recipe),
+    };
+  }).filter(Boolean);
 }
 function totals(s, lines) {
-  const subtotal = lines.reduce((a, l) => a + l.item.price * l.q, 0);
+  const subtotal = lines.reduce((a, l) => a + l.price * l.q, 0);
   const tax = Math.round((subtotal * s.taxRate) / 100);
   return { subtotal, tax, total: subtotal + tax };
 }
@@ -238,14 +285,15 @@ function viewCashier(id) {
   if (!s) { setAccent(); return bar('Store not found', '', '#/cashier') + `<div class="center-msg"><div class="emoji">🤔</div><p>That store is gone.</p></div>`; }
   lsSet('ordersStore', id);
   if (ui.cart.storeId !== id) { ui.cart = { storeId: id, lines: {} }; ui.cat = 'all'; }
-  for (const k of Object.keys(ui.cart.lines)) if (!s.items.some((i) => i.id === k)) delete ui.cart.lines[k];
+  for (const [k, l] of Object.entries(ui.cart.lines)) if (!s.items.some((i) => i.id === l.itemId)) delete ui.cart.lines[k];
   setAccent(s.color);
 
   const cats = s.categories.filter((c) => s.items.some((i) => i.categoryId === c.id));
   if (ui.cat !== 'all' && !cats.some((c) => c.id === ui.cat)) ui.cat = 'all';
   const items = s.items.filter((i) => ui.cat === 'all' || i.categoryId === ui.cat);
   const open = S.orders.filter((o) => o.storeId === id && o.status !== 'delivered').length;
-  const who = ui.customer ? `${esc(ui.customer.emoji)} ${esc(ui.customer.name)}` : '👤 Who?';
+  const who = ui.customer ? `<span class="face">${face(ui.customer)}</span> ${esc(ui.customer.name)}` : '👤 Who?';
+  const inCart = (id) => Object.values(ui.cart.lines).reduce((a, l) => a + (l.itemId === id ? l.qty : 0), 0);
 
   const tabs = cats.length > 1 ? `<nav class="tabs">
       <button class="${ui.cat === 'all' ? 'on' : ''}" data-act="cat" data-id="all">✨ Everything</button>
@@ -253,19 +301,26 @@ function viewCashier(id) {
     </nav>` : '';
 
   const tiles = items.map((i) => {
-    const q = ui.cart.lines[i.id] || 0;
+    const q = inCart(i.id);
+    const make = i.builder && !i.recipe;
+    const sale = !i.builder && i.wasPrice > i.price;
     return `<div class="tile-wrap">
-      <button class="tile ${q ? 'in-cart' : ''}" data-act="add" data-id="${i.id}">
+      <button class="tile ${q ? 'in-cart' : ''} ${make ? 'make' : ''}" data-act="add" data-id="${i.id}">
         ${q ? `<span class="qty">${q}</span>` : ''}
-        <span class="art">${art(i)}</span><span class="name">${esc(i.name)}</span><span class="price">${money(i.price)}</span>
+        ${sale ? `<span class="save">SAVE ${money(i.wasPrice - i.price)}</span>` : ''}
+        ${make ? '<span class="make-badge">✨ Make it!</span>' : ''}
+        <span class="art">${art(i)}</span><span class="name">${esc(i.name)}</span>
+        <span class="price-row"><span class="price">${make ? `from ${money(i.price)}` : money(i.price)}</span>${sale ? `<s class="was">${money(i.wasPrice)}</s>` : ''}</span>
       </button>
       ${i.addedBy === 'kid' ? `<button class="edit" data-act="edit-item" data-id="${i.id}" aria-label="Change ${esc(i.name)}">✏️</button>` : ''}
     </div>`;
   }).join('');
 
-  return bar(`${esc(s.emoji)} ${esc(s.name)}`,
-    `<a class="btn" href="#/orders/${s.id}">👨‍🍳 <span>Orders</span>${open ? `<b>${open}</b>` : ''}</a>`,
-    S.stores.length > 1 ? '#/cashier' : '#/') +
+  const title = S.stores.length > 1
+    ? `<button class="switch" data-act="switch-store">${esc(s.emoji)} ${esc(s.name)} <span class="caret">▾</span></button>`
+    : `${esc(s.emoji)} ${esc(s.name)}`;
+  return `<div class="store-wrap theme-${esc(s.theme || 'plain')}">` + bar(title,
+    `<a class="btn" href="#/orders/${s.id}">👨‍🍳 <span>Orders</span>${open ? `<b>${open}</b>` : ''}</a>`) +
     tabs +
     `<div class="cashier-body">
       <section class="grid">
@@ -273,7 +328,7 @@ function viewCashier(id) {
         <button class="tile add" data-act="new-item"><span class="art">➕</span><span class="name">Add my item</span></button>
       </section>
       ${cartHtml(s, who)}
-    </div>`;
+    </div></div>`;
 }
 
 function cartHtml(s, who) {
@@ -282,9 +337,9 @@ function cartHtml(s, who) {
   return `<aside class="cart">
     <h3>🛒 Order for <button data-act="pick-customer">${who}</button></h3>
     ${lines.length ? `<ul>${lines.map((l) => `<li>
-        <span class="art">${art(l.item)}</span>
-        <span class="nm">${esc(l.item.name)}<small>${money(l.item.price * l.q)}</small></span>
-        <span class="stepper"><button data-act="dec" data-id="${l.item.id}" aria-label="One less">−</button><span>${l.q}</span><button data-act="inc" data-id="${l.item.id}" aria-label="One more">+</button></span>
+        <span class="art">${art(l.pic)}</span>
+        <span class="nm">${esc(l.name)}<small>${money(l.price * l.q)}${l.recipe ? ` · <button class="line-edit" data-act="edit-line" data-k="${esc(l.key)}">✏️ change</button>` : ''}</small></span>
+        <span class="stepper"><button data-act="dec" data-k="${esc(l.key)}" aria-label="One less">−</button><span>${l.q}</span><button data-act="inc" data-k="${esc(l.key)}" aria-label="One more">+</button></span>
       </li>`).join('')}</ul>` : '<p class="muted">Tap things to add them to the order.</p>'}
     <dl class="totals">
       ${s.taxRate ? `<dt>Subtotal</dt><dd>${money(t.subtotal)}</dd><dt>Tax (${s.taxRate}%)</dt><dd>${money(t.tax)}</dd>` : ''}
@@ -307,7 +362,7 @@ function viewOrders(sel) {
     if (o.status !== 'new' && o.status !== 'making') continue;
     for (const l of o.lines) {
       if (l.done) continue;
-      const k = `${o.storeId}:${l.itemId || l.name}`;
+      const k = `${o.storeId}:${l.itemId || l.name}:${l.recipe ? JSON.stringify(l.recipe) : ''}`;
       const e = agg.get(k) || { l, n: 0 };
       e.n += l.qty;
       agg.set(k, e);
@@ -315,10 +370,7 @@ function viewOrders(sel) {
   }
   const toMake = [...agg.values()].sort((a, b) => b.n - a.n);
 
-  const picker = `<select data-act-change="orders-store" aria-label="Store">
-      <option value="all">All stores</option>
-      ${S.stores.map((s) => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${esc(s.emoji)} ${esc(s.name)}</option>`).join('')}
-    </select>`;
+  const picker = `<button class="btn switch-btn" data-act="switch-store">${single ? `${esc(single.emoji)} ${esc(single.name)}` : '🏪 All stores'} <span class="caret">▾</span></button>`;
   const column = (st, title) => {
     const os = col(st);
     return `<div class="col"><h3>${title} ${os.length ? `<span class="badge">${os.length}</span>` : ''}</h3>
@@ -354,10 +406,10 @@ function orderCard(o, sel) {
     delivered: '',
   }[o.status];
   return `<article class="order ${ui.fresh.has(o.id) ? 'fresh' : ''}" style="--c:${esc(s?.color || '#9ca3af')}" data-order="${o.id}">
-    <header><span class="num">#${o.number}</span><span class="who">${esc(o.customerEmoji)} ${esc(o.customer)}</span>
+    <header><span class="num">#${o.number}</span><span class="who"><span class="face">${face({ photo: o.customerPhoto, emoji: o.customerEmoji })}</span> ${esc(o.customer)}</span>
       <span class="ago">${sel === 'all' && s ? `${esc(s.emoji)} ` : ''}${ago(o.createdAt)}</span></header>
-    <ul>${o.lines.map((l, i) => `<li class="${l.done ? 'done' : ''}"><button data-act="tick" data-i="${i}" ${o.status === 'delivered' ? 'disabled' : ''}>
-        <span class="art">${art(l)}</span><span class="nm">${l.qty > 1 ? `${l.qty} × ` : ''}${esc(l.name)}</span><span class="tick">${l.done ? '✓' : ''}</span>
+    <ul>${o.lines.map((l, i) => `<li class="${l.done ? 'done' : ''} ${l.recipe ? 'custom' : ''}"><button data-act="tick" data-i="${i}" ${o.status === 'delivered' ? 'disabled' : ''}>
+        <span class="art">${art(l)}</span><span class="nm">${l.qty > 1 ? `${l.qty} × ` : ''}${esc(l.name)}${l.recipe ? `<small>${esc(Art.detailOf(l.builder, l.recipe))}</small>` : ''}</span><span class="tick">${l.done ? '✓' : ''}</span>
       </button></li>`).join('')}</ul>
     <div class="foot">
       ${o.paid ? `<span class="pill paid">✅ Paid ${money(o.total)}</span>` : `<button class="pill unpaid" data-act="pay">💸 Not paid · ${money(o.total)}</button>`}
@@ -374,7 +426,7 @@ function viewSetup(r) {
   if (!ui.pin) {
     return bar('⚙️ Setup') + `<div class="pinpad" id="pinpad">
       <h2>Grown-ups only 🔒</h2>
-      <div class="dots">${ui.pinEntry ? '●'.repeat(ui.pinEntry.length) : '<span class="muted">Enter the PIN</span>'}</div>
+      <div class="dots">${ui.pinEntry ? '●'.repeat(ui.pinEntry.length) : '<span class="hint">Enter the PIN</span>'}</div>
       <div class="keys">
         ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pin-key" data-k="${n}">${n}</button>`).join('')}
         <button data-act="pin-back" aria-label="Delete">⌫</button><button data-act="pin-key" data-k="0">0</button><button data-act="pin-ok">OK</button>
@@ -382,7 +434,6 @@ function viewSetup(r) {
   }
   if (r.a === 'store' && r.b) return viewStoreEditor(r.b);
   ui.draft = null;
-  if (!ui.custDraft || !ui.custDirty) { ui.custDraft = clone(S.customers); ui.custDirty = false; }
   const open = S.orders.filter((o) => o.status !== 'delivered').length;
   const delivered = S.orders.length - open;
   return bar('⚙️ Setup', '<button class="btn" data-act="lock">🔒 Lock</button>') + `<div class="setup">
@@ -396,13 +447,8 @@ function viewSetup(r) {
         </div>`).join('') : '<p class="muted">No stores yet. Tap “New store” and pick a template.</p>'}</div>
     </section>
     <section class="panel">
-      <h3><span class="grow">🙂 Customers</span><button class="btn" data-act="cust-add">➕ Add</button></h3>
-      <div class="list">${ui.custDraft.map((c, i) => `<div class="list-row">
-          <input class="emoji-in" data-cust="${i}" data-k="emoji" value="${esc(c.emoji)}" maxlength="16" aria-label="Emoji">
-          <input class="grow-in" data-cust="${i}" data-k="name" value="${esc(c.name)}" maxlength="30" placeholder="Name" aria-label="Name">
-          <button class="btn icon danger" data-act="cust-del" data-i="${i}" aria-label="Remove">✕</button>
-        </div>`).join('')}</div>
-      <div class="row end"><button class="btn primary" data-act="cust-save" id="cust-save" ${ui.custDirty ? '' : 'disabled'}>💾 Save customers</button></div>
+      <h3><span class="grow">🙂 People</span><a class="btn" href="#/people">Manage people</a></h3>
+      <p class="muted">Customers, with their names, emoji and photos, live on the home screen under <b>People</b>, so kids can add them without the PIN.</p>
     </section>
     <section class="panel">
       <h3>🧾 Orders</h3>
@@ -430,7 +476,7 @@ function viewStoreEditor(id) {
   setAccent(d.color);
   const itemRows = (cat) => d.items.filter((i) => i.categoryId === cat.id).map((i) => `<div class="list-row">
       <span class="e">${art(i)}</span>
-      <span class="grow">${esc(i.name)}<small>${money(i.price)}${i.addedBy === 'kid' ? ' · ⭐ added at the register' : ''}</small></span>
+      <span class="grow">${esc(i.name)}<small>${i.builder ? `${i.recipe ? '' : 'from '}${money(i.price)} · ${i.recipe ? 'preset' : 'build your own'} ${i.builder}` : money(i.price)}${i.wasPrice > i.price ? ` · sale, was ${money(i.wasPrice)}` : ''}${i.addedBy === 'kid' ? ' · ⭐ added at the register' : ''}</small></span>
       <button class="btn" data-act="item-edit" data-id="${esc(i.id)}">✏️ Edit</button>
     </div>`).join('') || '<p class="muted">No items in this category.</p>';
   return `<header class="bar"><button class="btn icon" data-act="editor-back" aria-label="Back">←</button>
@@ -444,6 +490,9 @@ function viewStoreEditor(id) {
           <label class="field">Tax %<input data-d="taxRate" type="number" inputmode="decimal" min="0" max="50" step="0.25" value="${d.taxRate}"></label>
         </div>
         <div class="field">Color<div class="swatches">${COLORS.map((c) => `<button data-act="color" data-c="${c}" class="${c === d.color ? 'on' : ''}" style="background:${c}" aria-label="${c}"></button>`).join('')}</div></div>
+        <div class="field">Look<div class="row">
+          ${[['plain', '🏪 Plain'], ['electronics', '📺 Electronics store']].map(([k, label]) => `<button class="btn ${(d.theme || 'plain') === k ? 'primary' : ''}" data-act="theme" data-t="${k}">${label}</button>`).join('')}
+        </div></div>
         <label class="toggle"><input type="checkbox" data-d="playMoney" ${d.playMoney ? 'checked' : ''}> 💵 Pay with play money (bills, coins and change)</label>
       </section>
       <section class="panel">
@@ -460,7 +509,9 @@ function viewStoreEditor(id) {
       </section>
       <section class="panel">
         <h3>⚠️ Careful</h3>
-        <div class="row"><button class="btn danger" data-act="store-del">🗑️ Delete this store</button></div>
+        <div class="row"><button class="btn" data-act="store-reset">🔄 Fresh menu from a template…</button>
+          <button class="btn danger" data-act="store-del">🗑️ Delete this store</button></div>
+        <p class="muted">A fresh menu replaces the categories and items with a template's. Items Ethan added himself are kept.</p>
       </section>
     </div>`;
 }
@@ -474,7 +525,7 @@ function customerModal(after) {
         <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
         <h2>Who is this order for?</h2>
         <div class="choices">
-          ${S.customers.map((c) => `<button class="choice" data-act="pick" data-id="${c.id}"><span class="e">${esc(c.emoji)}</span>${esc(c.name)}</button>`).join('')}
+          ${S.customers.map((c) => `<button class="choice" data-act="pick" data-id="${c.id}"><span class="e">${face(c)}</span>${esc(c.name)}</button>`).join('')}
           <button class="choice ${m.adding ? 'on' : ''}" data-act="someone"><span class="e">➕</span>Someone new</button>
         </div>
         ${m.adding ? `
@@ -485,7 +536,7 @@ function customerModal(after) {
       </div>`;
     },
     done(c) {
-      ui.customer = { name: c.name, emoji: c.emoji };
+      ui.customer = { name: c.name, emoji: c.emoji, photo: c.photo || null };
       closeModal();
       render();
       after?.();
@@ -541,7 +592,7 @@ function payModal(order, { fresh = false } = {}) {
       const enough = gave >= order.total;
       return `<div class="sheet">
         ${fresh ? `<h2>🚀 Order #${order.number} sent to the kitchen!</h2>` : `<button class="btn icon close" data-act="close" aria-label="Close">✕</button><h2>Pay for order #${order.number}</h2>`}
-        <div class="pay-total">${esc(order.customerEmoji)} ${esc(order.customer)} pays<strong>${money(order.total)}</strong></div>
+        <div class="pay-total"><span class="face">${face({ photo: order.customerPhoto, emoji: order.customerEmoji })}</span> ${esc(order.customer)} pays<strong>${money(order.total)}</strong></div>
         ${playMoney ? `
           <div class="muted" style="text-align:center">Tap the money they give you:</div>
           <div class="money-tray">${DENOMS.map((d) => `<button class="money ${d.kind} c${d.v}" data-act="money" data-v="${d.v}">${d.label}</button>`).join('')}</div>
@@ -607,9 +658,10 @@ async function shrinkPhoto(file) {
 function itemModal({ store, item, mode, defaultCat = null }) {
   const cats = mode === 'setup' ? ui.draft.categories : store.categories;
   const hasMyStuff = cats.some((c) => c.name.toLowerCase() === 'my stuff');
+  const custom = !!item?.builder; // builder items price themselves from their recipe
   const f = item
-    ? { name: item.name, emoji: item.emoji, photo: item.photo, price: item.price, categoryId: item.categoryId }
-    : { name: '', emoji: '⭐', photo: null, price: 100, categoryId: defaultCat || (mode === 'setup' ? cats[0]?.id : null) };
+    ? { name: item.name, emoji: item.emoji, icon: item.icon || null, photo: item.photo, price: item.price, wasPrice: item.wasPrice || null, categoryId: item.categoryId }
+    : { name: '', emoji: '⭐', icon: null, photo: null, price: 100, wasPrice: null, categoryId: defaultCat || (mode === 'setup' ? cats[0]?.id : null) };
   const catChips = () => {
     const chips = mode === 'kid' && !hasMyStuff ? [{ id: null, name: 'My Stuff', emoji: '⭐' }, ...cats] : cats;
     if (chips.length < 2) return '';
@@ -617,21 +669,27 @@ function itemModal({ store, item, mode, defaultCat = null }) {
     return `<div class="field">Where does it go?<div class="row">${chips.map((c) =>
       `<button class="btn ${c.id === sel ? 'primary' : ''}" data-act="cat" data-id="${c.id ?? ''}">${esc(c.emoji)} ${esc(c.name)}</button>`).join('')}</div></div>`;
   };
+  const pv = () => (custom ? { builder: item.builder, recipe: item.recipe } : f);
   const m = {
     busy: false,
     render() {
       return `<div class="sheet">
         <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
         <h2>${item ? '✏️ Change item' : mode === 'kid' ? '⭐ Add my item' : '➕ New item'}</h2>
-        <div class="preview"><div class="tile"><span class="art">${art(f)}</span><span class="name" id="pv-name">${esc(f.name || 'Name?')}</span><span class="price">${money(f.price)}</span></div></div>
+        <div class="preview"><div class="tile"><span class="art">${art(pv())}</span><span class="name" id="pv-name">${esc(f.name || 'Name?')}</span><span class="price">${money(f.price)}</span></div></div>
+        ${custom ? `<p class="muted center">This is a custom ${item.builder}: its picture and price come from what goes in it.</p>` : `
         <div class="row" style="justify-content:center">
           <button class="btn" data-act="photo-cam">📷 Take a photo</button>
           <button class="btn" data-act="photo-pick">🖼️ Pick a photo</button>
           ${f.photo ? '<button class="btn danger" data-act="photo-del">No photo</button>' : ''}
-        </div>
+        </div>`}
         <label class="field">What is it called?<input data-f="name" value="${esc(f.name)}" maxlength="40" autocomplete="off" placeholder="My cool rock"></label>
-        <div class="field">${f.photo ? 'Emoji (shown if the photo goes missing)' : 'Pick a picture'}
-          <div class="emoji-grid">${ITEM_EMOJI.map((e) => `<button data-act="emoji" data-e="${e}" class="${e === f.emoji ? 'on' : ''}">${e}</button>`).join('')}</div></div>
+        ${custom ? '' : `
+        <div class="field">${f.photo ? 'Picture (shown if the photo goes missing)' : 'Pick a picture'}
+          <div class="emoji-grid" data-scroll="pics">
+            ${Art.ICON_KEYS.map((k) => `<button class="ic ${f.icon === k ? 'on' : ''}" data-act="icon" data-k="${k}" aria-label="${esc(Art.ICONS[k].label)}">${Art.icon(k)}</button>`).join('')}
+            ${ITEM_EMOJI.map((e) => `<button data-act="emoji" data-e="${e}" class="${!f.icon && e === f.emoji ? 'on' : ''}">${e}</button>`).join('')}
+          </div></div>
         <div class="field">How much does it cost?
           <div class="price-pad">
             <button class="btn" data-act="price" data-d="-100">−$1</button><button class="btn" data-act="price" data-d="-25">−25¢</button>
@@ -640,6 +698,8 @@ function itemModal({ store, item, mode, defaultCat = null }) {
           </div>
           <div class="row" style="justify-content:center">${[0, 50, 100, 200, 500, 1000, 2000].map((p) => `<button class="btn ghost" data-act="price-set" data-p="${p}">${p ? money(p) : 'Free'}</button>`).join('')}</div>
         </div>
+        ${mode === 'setup' ? `<label class="field">On sale? Old price in $ (leave empty for no sale)
+          <input data-f="was" type="number" inputmode="decimal" min="0" step="0.01" value="${f.wasPrice ? (f.wasPrice / 100).toFixed(2) : ''}" placeholder="e.g. 59.99"></label>` : ''}`}
         ${catChips()}
         <div class="row split">
           ${item ? '<button class="btn danger" data-act="delete">🗑️ Remove it</button>' : '<span></span>'}
@@ -648,11 +708,13 @@ function itemModal({ store, item, mode, defaultCat = null }) {
       </div>`;
     },
     input(t) {
-      if (t.dataset.f === 'name') { f.name = t.value; const pv = document.getElementById('pv-name'); if (pv) pv.textContent = f.name || 'Name?'; }
+      if (t.dataset.f === 'name') { f.name = t.value; const el = document.getElementById('pv-name'); if (el) el.textContent = f.name || 'Name?'; }
+      if (t.dataset.f === 'was') f.wasPrice = Math.round(parseFloat(t.value) * 100) || null;
     },
     enter() { /* Enter in the name field just closes the keyboard */ document.activeElement?.blur(); },
     async act(a, el) {
-      if (a === 'emoji') { f.emoji = el.dataset.e; drawModal(); return; }
+      if (a === 'emoji') { f.emoji = el.dataset.e; f.icon = null; drawModal(); return; }
+      if (a === 'icon') { f.icon = el.dataset.k; drawModal(); return; }
       if (a === 'price') { f.price = Math.max(0, f.price + Number(el.dataset.d)); drawModal(); return; }
       if (a === 'price-set') { f.price = Number(el.dataset.p); drawModal(); return; }
       if (a === 'cat') { f.categoryId = el.dataset.id || null; drawModal(); return; }
@@ -696,38 +758,216 @@ function itemModal({ store, item, mode, defaultCat = null }) {
   openModal(m);
 }
 
-function newStoreModal() {
+// Custom sandwich / drink: stack layers into a labelled cut-away picture.
+const EMPTY_RECIPE = {
+  sandwich: { bread: 'white', layers: [], toasted: false },
+  drink: { size: 'm', iced: false, layers: [], toppings: [] },
+};
+function builderModal({ store, item, recipe = null, replaceKey = null }) {
+  const B = item.builder;
+  const def = Art.BUILDERS[B];
+  let rec = Art.normRecipe(B, recipe || EMPTY_RECIPE[B]);
+  const m = {
+    newIndex: null,
+    render() {
+      const ni = m.newIndex; m.newIndex = null; // the drop-in animation plays once
+      const classic = Art.classicOf(B, rec);
+      const full = rec.layers.length >= def.max;
+      const chips = B === 'sandwich'
+        ? `<div class="field">Bread<div class="row">${Object.entries(def.breads).map(([k, b]) =>
+            `<button class="btn chip ${rec.bread === k ? 'primary' : ''}" data-act="bread" data-k="${k}"><i class="dot" style="background:${rec.toasted ? b.toast : b.crumb};border-color:${b.crust}"></i>${b.name}</button>`).join('')}
+            <button class="btn chip ${rec.toasted ? 'warn' : ''}" data-act="toast">🔥 ${rec.toasted ? 'Toasted!' : 'Toast it'}</button></div></div>`
+        : `<div class="field">Size<div class="row">${Object.entries(def.sizes).map(([k, z]) =>
+            `<button class="btn chip ${rec.size === k ? 'primary' : ''}" data-act="size" data-k="${k}">${z.name} · ${money(z.price)}</button>`).join('')}
+            <button class="btn chip ${!rec.iced ? 'primary' : ''}" data-act="iced" data-v="0">♨️ Hot</button>
+            <button class="btn chip ${rec.iced ? 'primary' : ''}" data-act="iced" data-v="1">🧊 Iced</button></div></div>`;
+      const layerBtn = (id, L) => `<button class="ing" data-act="layer" data-id="${id}" ${full ? 'disabled' : ''}>
+          <span class="ing-art">${Art.layerArt(B, id)}</span><span>${esc(B === 'drink' && rec.iced && L.iced ? L.iced : L.name)}</span>${L.price ? `<small>+${money(L.price)}</small>` : ''}</button>`;
+      const toppings = B === 'drink' ? `<div class="field">On top<div class="ings">${Object.entries(def.toppings).map(([id, t]) =>
+          `<button class="ing ${rec.toppings.includes(id) ? 'on' : ''}" data-act="topping" data-id="${id}"><span class="ing-art">${Art.layerArt(B, id)}</span><span>${esc(t.name)}</span><small>+${money(t.price)}</small></button>`).join('')}</div></div>` : '';
+      return `<div class="sheet builder">
+        <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
+        <h2>${B === 'sandwich' ? '🥪 Build a sandwich' : '☕ Make a drink'}</h2>
+        <div class="stage-wrap">
+          <div class="stage">${Art.draw(B, rec, { labels: true, interactive: true, newIndex: ni })}</div>
+          <div class="stage-side">
+            <div class="drink-name">${esc(Art.nameOf(B, rec))}</div>
+            ${classic?.say ? `<div class="say">[${esc(classic.say)}]</div>` : ''}
+            ${classic && rec.layers.length ? `<div class="classic">✨ It's a ${esc(classic.name)}!</div>` : ''}
+            <div class="sticker">${money(Art.priceOf(B, rec))}</div>
+            <div class="muted small">${rec.layers.length ? 'Tap a layer in the picture to take it off.' : B === 'sandwich' ? 'Tap the fillings to stack them up!' : 'Tap the layers to fill the cup!'}</div>
+          </div>
+        </div>
+        ${chips}
+        <div class="field">${B === 'sandwich' ? 'Fillings' : 'Layers'} <span class="muted small">(${rec.layers.length}/${def.max})</span>
+          <div class="ings">${Object.entries(def.layers).map(([id, L]) => layerBtn(id, L)).join('')}</div></div>
+        ${toppings}
+        <div class="row split">
+          <span class="row"><button class="btn" data-act="undo" ${rec.layers.length ? '' : 'disabled'}>↩️ Undo</button>
+          <button class="btn ghost" data-act="restart" ${rec.layers.length ? '' : 'disabled'}>Start over</button></span>
+          <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="add-built">${replaceKey ? '✅ Save changes' : '✅ Add to order'}</button>
+        </div>
+      </div>`;
+    },
+    act(a, el) {
+      const set = (next) => { rec = Art.normRecipe(B, next); drawModal(); };
+      if (a === 'layer') {
+        if (rec.layers.length >= def.max) { toast(B === 'drink' ? "The cup's full! ☕" : "That's as tall as it gets! 🥪"); return; }
+        m.newIndex = rec.layers.length;
+        sfx.pop();
+        set({ ...rec, layers: [...rec.layers, el.dataset.id] });
+        return;
+      }
+      if (a === 'rm-layer') { const layers = [...rec.layers]; layers.splice(Number(el.dataset.i), 1); set({ ...rec, layers }); return; }
+      if (a === 'undo') { set({ ...rec, layers: rec.layers.slice(0, -1) }); return; }
+      if (a === 'restart') { set({ ...rec, layers: [], ...(B === 'drink' ? { toppings: [] } : {}) }); return; }
+      if (a === 'bread') { set({ ...rec, bread: el.dataset.k }); return; }
+      if (a === 'toast') { set({ ...rec, toasted: !rec.toasted }); return; }
+      if (a === 'size') { set({ ...rec, size: el.dataset.k }); return; }
+      if (a === 'iced') { set({ ...rec, iced: el.dataset.v === '1' }); return; }
+      if (a === 'topping') {
+        const id = el.dataset.id;
+        set({ ...rec, toppings: rec.toppings.includes(id) ? rec.toppings.filter((t) => t !== id) : [...rec.toppings, id] });
+        return;
+      }
+      if (a === 'add-built') {
+        if (!rec.layers.length && !confirm(B === 'drink' ? 'The cup is empty. Sell an empty cup?' : 'Just bread? Sell it anyway?')) return;
+        let n = 1;
+        if (replaceKey) { n = ui.cart.lines[replaceKey]?.qty || 1; delete ui.cart.lines[replaceKey]; }
+        addLine(item, rec, n);
+        sfx.pop();
+        closeModal(); render();
+      }
+    },
+  };
+  openModal(m);
+}
+
+function storePickerModal(view) {
+  const tile = (href, color, emoji, name) => `<button class="choice store-choice" style="--c:${esc(color)}" data-act="go" data-h="${esc(href)}"><span class="e">${esc(emoji)}</span>${esc(name)}</button>`;
   openModal({
     render: () => `<div class="sheet">
       <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
-      <h2>What kind of store?</h2>
-      <div class="choices">${S.templates.map((t) => `<button class="choice" data-act="tpl" data-k="${t.key}"><span class="e">${esc(t.emoji)}</span>${esc(t.label)}</button>`).join('')}</div>
-    </div>`,
-    async act(a, el) {
-      if (a !== 'tpl') return;
-      const s = await api('POST', '/api/stores', { template: el.dataset.k }, { pin: true });
-      S.stores.push(s);
+      <h2>${view === 'orders' ? 'Which orders?' : 'Which store is open?'}</h2>
+      <div class="choices">
+        ${view === 'orders' ? tile('#/orders/all', '#475569', '🏪', 'All stores') : ''}
+        ${S.stores.map((s) => tile(view === 'orders' ? `#/orders/${s.id}` : `#/cashier/${s.id}`, s.color, s.emoji, s.name)).join('')}
+      </div></div>`,
+    act(a, el) {
+      if (a !== 'go') return;
+      if (view === 'orders') lsSet('ordersStore', el.dataset.h.split('/').pop());
       closeModal();
-      location.hash = `#/setup/store/${s.id}`;
+      location.hash = el.dataset.h;
     },
   });
+}
+
+function templateModal(title, onPick) {
+  openModal({
+    render: () => `<div class="sheet">
+      <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
+      <h2>${title}</h2>
+      <div class="choices">${S.templates.map((t) => `<button class="choice" data-act="tpl" data-k="${t.key}"><span class="e">${esc(t.emoji)}</span>${esc(t.label)}</button>`).join('')}</div>
+    </div>`,
+    async act(a, el) { if (a === 'tpl') await onPick(el.dataset.k); },
+  });
+}
+
+function newStoreModal() {
+  templateModal('What kind of store?', async (key) => {
+    const s = await api('POST', '/api/stores', { template: key }, { pin: true });
+    S.stores.push(s);
+    closeModal();
+    location.hash = `#/setup/store/${s.id}`;
+  });
+}
+
+// Add or change a person (customer) from the People page. No PIN.
+function personModal(person) {
+  const f = person ? { name: person.name, emoji: person.emoji, photo: person.photo || null } : { name: '', emoji: '🙂', photo: null };
+  const m = {
+    busy: false,
+    render() {
+      return `<div class="sheet">
+        <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
+        <h2>${person ? `✏️ ${esc(person.name)}` : '➕ Someone new'}</h2>
+        <div class="preview"><div class="person big"><span class="pic">${face(f)}</span><span id="pv-name">${esc(f.name || 'Name?')}</span></div></div>
+        <div class="row" style="justify-content:center">
+          <button class="btn" data-act="photo-cam">📷 Take a photo</button>
+          <button class="btn" data-act="photo-pick">🖼️ Pick a photo</button>
+          ${f.photo ? '<button class="btn danger" data-act="photo-del">No photo</button>' : ''}
+        </div>
+        <label class="field">Name<input data-f="name" value="${esc(f.name)}" maxlength="30" autocomplete="off" placeholder="Name"></label>
+        <div class="field">${f.photo ? 'Emoji (shown if the photo goes missing)' : 'Pick a face'}
+          <div class="emoji-grid" data-scroll="faces">${PEOPLE_EMOJI.map((e) => `<button data-act="emoji" data-e="${e}" class="${e === f.emoji ? 'on' : ''}">${e}</button>`).join('')}</div></div>
+        <div class="row split">
+          ${person ? '<button class="btn danger" data-act="delete">🗑️ Remove</button>' : '<span></span>'}
+          <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="save" ${m.busy ? 'disabled' : ''}>✅ Save</button>
+        </div>
+      </div>`;
+    },
+    input(t) { if (t.dataset.f === 'name') { f.name = t.value; const el = document.getElementById('pv-name'); if (el) el.textContent = f.name || 'Name?'; } },
+    enter() { document.activeElement?.blur(); },
+    async act(a, el) {
+      if (a === 'emoji') { f.emoji = el.dataset.e; drawModal(); return; }
+      if (a === 'photo-del') { f.photo = null; drawModal(); return; }
+      if (a === 'photo-cam' || a === 'photo-pick') {
+        const file = await readFile(a === 'photo-cam');
+        if (!file) return;
+        try { f.photo = await shrinkPhoto(file); } catch { toast("Couldn't read that photo"); return; }
+        if (ui.modal === m) drawModal();
+        return;
+      }
+      if (a === 'delete') {
+        if (!confirm(`Remove ${person.name}?`)) return;
+        await api('DELETE', `/api/customers/${person.id}`);
+        await loadAll(); closeModal(); render();
+        return;
+      }
+      if (a === 'save') {
+        if (!f.name.trim()) { toast('Type their name first ✏️'); return; }
+        m.busy = true; drawModal();
+        try {
+          const body = { ...f, name: f.name.trim() };
+          if (person) await api('PUT', `/api/customers/${person.id}`, body);
+          else await api('POST', '/api/customers', body);
+        } catch (e) { m.busy = false; drawModal(); throw e; }
+        await loadAll(); closeModal(); render();
+        toast(person ? 'Saved ✅' : `Hi ${f.name.trim()}! 👋`);
+      }
+    },
+  };
+  openModal(m);
 }
 
 // ------------------------------------------------------------------ actions on the main view
 const ACT = {
   // cashier
   cat(el) { ui.cat = el.dataset.id; render(); },
-  add(el) { ui.cart.lines[el.dataset.id] = (ui.cart.lines[el.dataset.id] || 0) + 1; sfx.pop(); render(); },
-  inc(el) { ui.cart.lines[el.dataset.id] = Math.min(99, (ui.cart.lines[el.dataset.id] || 0) + 1); render(); },
-  dec(el) { const id = el.dataset.id; ui.cart.lines[id] = (ui.cart.lines[id] || 0) - 1; if (ui.cart.lines[id] <= 0) delete ui.cart.lines[id]; render(); },
+  add(el) {
+    const s = storeById(route().a);
+    const item = s?.items.find((i) => i.id === el.dataset.id);
+    if (!item) return;
+    if (item.builder && !item.recipe) { builderModal({ store: s, item }); return; }
+    addLine(item); sfx.pop(); render();
+  },
+  inc(el) { const l = ui.cart.lines[el.dataset.k]; if (l) l.qty = Math.min(99, l.qty + 1); render(); },
+  dec(el) { const k = el.dataset.k; const l = ui.cart.lines[k]; if (l && --l.qty <= 0) delete ui.cart.lines[k]; render(); },
+  'edit-line'(el) {
+    const s = storeById(route().a);
+    const l = ui.cart.lines[el.dataset.k];
+    const item = l && s?.items.find((i) => i.id === l.itemId);
+    if (item?.builder) builderModal({ store: s, item, recipe: l.recipe, replaceKey: el.dataset.k });
+  },
+  'switch-store'() { storePickerModal(route().view === 'orders' ? 'orders' : 'cashier'); },
   clear() { ui.cart.lines = {}; ui.customer = null; ui.askedCustomer = false; render(); },
   'pick-customer'() { customerModal(); },
   async send() {
     const s = storeById(route().a);
     if (!s) return;
     if (!ui.customer) { customerModal(() => ACT.send()); return; }
-    const lines = cartLines(s).map((l) => ({ itemId: l.item.id, qty: l.q }));
-    const order = await api('POST', '/api/orders', { storeId: s.id, customer: ui.customer.name, customerEmoji: ui.customer.emoji, lines });
+    const lines = cartLines(s).map((l) => ({ itemId: l.item.id, qty: l.q, recipe: l.recipe || undefined }));
+    const order = await api('POST', '/api/orders', { storeId: s.id, customer: ui.customer.name, customerEmoji: ui.customer.emoji, customerPhoto: ui.customer.photo || null, lines });
     S.orders.push(order);
     sfx.newOrder();
     payModal(order, { fresh: true });
@@ -780,18 +1020,14 @@ const ACT = {
     ui.pinEntry = '';
     render();
   },
-  lock() { ui.pin = null; ssSet('pin', null); ui.custDraft = null; location.hash = '#/'; },
+  lock() { ui.pin = null; ssSet('pin', null); location.hash = '#/'; },
+
+  // people (home screen, no PIN)
+  person(el) { const c = S.customers.find((x) => x.id === el.dataset.id); if (c) personModal(c); },
+  'person-add'() { personModal(null); },
 
   // setup: main
   'new-store'() { newStoreModal(); },
-  'cust-add'() { ui.custDraft.push({ name: '', emoji: '🙂' }); ui.custDirty = true; render(); },
-  'cust-del'(el) { ui.custDraft.splice(Number(el.dataset.i), 1); ui.custDirty = true; render(); },
-  async 'cust-save'() {
-    S.customers = await api('PUT', '/api/customers', ui.custDraft, { pin: true });
-    ui.custDraft = clone(S.customers); ui.custDirty = false;
-    render();
-    toast('Customers saved ✅');
-  },
   async 'clear-delivered'() {
     if (!confirm('Remove all delivered orders?')) return;
     await api('DELETE', '/api/orders?status=delivered', undefined, { pin: true });
@@ -805,6 +1041,19 @@ const ACT = {
 
   // setup: store editor
   color(el) { ui.draft.color = el.dataset.c; ui.dirty = true; render(); },
+  theme(el) { ui.draft.theme = el.dataset.t; ui.dirty = true; render(); },
+  'store-reset'() {
+    if (ui.dirty && !confirm('You have unsaved changes. Throw them away?')) return;
+    const id = ui.draft.id;
+    templateModal('Fresh menu from which template?', async (key) => {
+      if (!confirm('Replace all the categories and items? Items added at the register are kept.')) return;
+      const saved = await api('POST', `/api/stores/${id}/reset`, { template: key }, { pin: true });
+      S.stores = S.stores.map((s) => (s.id === saved.id ? saved : s));
+      ui.draft = clone(saved); ui.dirty = false;
+      closeModal(); render();
+      toast('Fresh menu ✅');
+    });
+  },
   'cat-add'() { ui.draft.categories.push({ id: `c${rid()}`, name: 'New category', emoji: '🏷️' }); ui.dirty = true; render(); },
   'cat-del'(el) {
     const d = ui.draft;
@@ -857,22 +1106,12 @@ $app.addEventListener('click', (e) => {
 function onField(e) {
   const t = e.target;
   const d = ui.draft;
-  if (t.dataset.actChange === 'orders-store' && e.type === 'change') {
-    lsSet('ordersStore', t.value);
-    location.hash = `#/orders/${t.value}`;
-    return;
-  }
   if (t.dataset.d && d) {
     d[t.dataset.d] = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Number(t.value) || 0 : t.value;
     ui.dirty = true;
   } else if (t.dataset.cat !== undefined && d) {
     d.categories[Number(t.dataset.cat)][t.dataset.k] = t.value;
     ui.dirty = true;
-  } else if (t.dataset.cust !== undefined && ui.custDraft) {
-    ui.custDraft[Number(t.dataset.cust)][t.dataset.k] = t.value;
-    ui.custDirty = true;
-    const b = document.getElementById('cust-save');
-    if (b) b.disabled = false;
   }
 }
 $app.addEventListener('input', onField);

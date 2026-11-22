@@ -5,7 +5,7 @@ const $app = document.getElementById('app');
 const $modal = document.getElementById('modal');
 const $toast = document.getElementById('toast');
 
-const S = { stores: [], customers: [], templates: [], orders: [], loaded: false };
+const S = { stores: [], customers: [], templates: [], orders: [], banks: [], accounts: [], loaded: false };
 const ui = {
   cart: { storeId: null, lines: {} }, // key -> { itemId, qty, recipe }
   customer: null,                      // { name, emoji, photo }
@@ -24,8 +24,9 @@ const ITEM_EMOJI = ['🍎','🍌','🍓','🍇','🍉','🍊','🥕','🌽','�
 const PEOPLE_EMOJI = ['🙂','😀','😎','🤠','🥳','🤖','👽','🦸','🧙','👸','🤴','👩','👨','👵','👴','🧒','👶','🐻','🐶','🐱','🦊','🐼'];
 const COLORS = ['#ff7a45','#db2777','#9333ea','#2563eb','#0891b2','#16a34a','#ca8a04','#9a5b34','#dc2626','#475569'];
 const DENOMS = [
+  { v: 10000, label: '$100', kind: 'bill' }, { v: 5000, label: '$50', kind: 'bill' },
   { v: 2000, label: '$20', kind: 'bill' }, { v: 1000, label: '$10', kind: 'bill' },
-  { v: 500, label: '$5', kind: 'bill' }, { v: 100, label: '$1', kind: 'bill' },
+  { v: 500, label: '$5', kind: 'bill' }, { v: 200, label: '$2', kind: 'bill' }, { v: 100, label: '$1', kind: 'bill' },
   { v: 25, label: '25¢', kind: 'coin' }, { v: 10, label: '10¢', kind: 'coin' },
   { v: 5, label: '5¢', kind: 'coin' }, { v: 1, label: '1¢', kind: 'coin' },
 ];
@@ -73,6 +74,87 @@ function breakdown(c) {
   return out;
 }
 const moneyChip = (d, extra = '') => `<span class="money ${d.kind} c${d.v} mini ${extra}">${d.label}</span>`;
+const sumOf = (list) => list.reduce((a, v) => a + v, 0);
+// Tap-the-money tray: bills, then coins, then what has been handed over so far (tap one to take it back).
+function cashTray(given) {
+  const btn = (d) => `<button class="money ${d.kind} c${d.v}" data-act="money" data-v="${d.v}">${d.label}</button>`;
+  return `<div class="money-tray bills">${DENOMS.filter((d) => d.kind === 'bill').map(btn).join('')}</div>
+    <div class="money-tray coins">${DENOMS.filter((d) => d.kind === 'coin').map(btn).join('')}</div>
+    <div class="given">${given.length ? given.map((v, i) => `<button data-act="undo" data-i="${i}" aria-label="Take back">${moneyChip(DENOMS.find((d) => d.v === v))}</button>`).join('') : '<span class="muted">No money yet</span>'}</div>`;
+}
+// Handles the tray's taps for any modal with a `given` list. Returns true when it did.
+function trayAct(m, a, el) {
+  if (a === 'money') { m.given.push(Number(el.dataset.v)); sfx.pop(); drawModal(); return true; }
+  if (a === 'undo') { m.given.splice(Number(el.dataset.i), 1); drawModal(); return true; }
+  return false;
+}
+// 4-digit PIN pad used inside modals (card PINs).
+function pinPad(entry) {
+  return `<div class="pinpad inline"><div class="dots">${'●'.repeat(entry.length)}${'○'.repeat(Math.max(0, 4 - entry.length))}</div>
+    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pk" data-k="${n}">${n}</button>`).join('')}
+      <button data-act="pk-clear" aria-label="Clear">✕</button><button data-act="pk" data-k="0">0</button><button data-act="pk-back" aria-label="Delete">⌫</button></div></div>`;
+}
+function pinAct(m, a, el) {
+  if (a === 'pk') { if (m.pin.length < 4) m.pin += el.dataset.k; sfx.pop(); drawModal(); return true; }
+  if (a === 'pk-back') { m.pin = m.pin.slice(0, -1); drawModal(); return true; }
+  if (a === 'pk-clear') { m.pin = ''; drawModal(); return true; }
+  return false;
+}
+
+// ------------------------------------------------------------------ bank helpers
+const bankById = (id) => S.banks.find((b) => b.id === id);
+const CARD_DESIGNS = {
+  bank: null, ocean: ['#38bdf8', '#1e3a8a'], grape: ['#c084fc', '#4c1d95'], lava: ['#fb923c', '#b91c1c'],
+  forest: ['#4ade80', '#14532d'], gold: ['#fcd34d', '#b45309'], candy: ['#f9a8d4', '#be185d'], night: ['#475569', '#020617'],
+};
+const BANK_EMOJI = ['🏦', '🐷', '💰', '🪙', '💎', '🦖', '🦄', '🚀', '🌈', '⭐', '🐉', '🏰', '🐻', '🦁', '🍀', '👑'];
+function cardBg(design, bank) {
+  const d = CARD_DESIGNS[design];
+  const c = bank?.color || '#0f766e';
+  const [c1, c2] = d || [c, `color-mix(in srgb, ${c} 45%, #000)`];
+  return `--c1:${c1};--c2:${c2}`;
+}
+const allCards = () => S.accounts.flatMap((account) => account.cards.map((card) => ({ account, card })));
+// A drawn debit card. `full` shows the whole number (at the bank); elsewhere only the last 4.
+function debitCard(account, card, { full = false, small = false, bank = null } = {}) {
+  const b = bank || bankById(account.bankId) || { name: 'Bank', emoji: '🏦', color: '#0f766e' };
+  const n = card.number || '';
+  const num = n ? (full ? n.match(/.{4}/g).join(' ') : `•••• ${n.slice(-4)}`) : '•••• •••• •••• ••••';
+  return `<div class="dcard ${small ? 'small' : ''} ${card.frozen ? 'frozen' : ''}" style="${cardBg(card.design, b)}">
+    <div class="dc-top"><span class="dc-bank">${esc(b.emoji)} ${esc(b.name)}</span><span class="dc-kind">DEBIT</span></div>
+    <div class="dc-mid"><span class="dc-chip"></span><span class="dc-wave">)))</span></div>
+    <div class="dc-num">${num}</div>
+    <div class="dc-bot"><span class="dc-name">${esc(account.owner?.name || 'Your name')}</span>${card.hasPin ? '<span class="dc-pin">🔒 PIN</span>' : ''}</div>
+    ${card.frozen ? '<div class="dc-frost">❄️ Frozen</div>' : ''}
+  </div>`;
+}
+function when(iso) {
+  const d = new Date(iso);
+  if (Date.now() - d < 86400000) return ago(iso);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// In-app yes/no box. The browser's built-in confirm box is silently blocked in some places
+// (iframes, kiosk and home-screen web views), which made delete buttons do nothing.
+function askConfirm(msg, { yes = 'Yes', no = 'No', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const el = document.createElement('div');
+    el.className = 'ask';
+    el.innerHTML = `<div class="sheet" role="alertdialog" aria-modal="true"><p class="ask-msg">${esc(msg)}</p>
+      <div class="row split"><button class="btn" data-a="no">${esc(no)}</button><button class="btn ${danger ? 'bad' : 'primary'}" data-a="yes">${esc(yes)}</button></div></div>`;
+    const done = (v) => { el.remove(); window.removeEventListener('hashchange', off); document.removeEventListener('keydown', key, true); resolve(v); };
+    const off = () => done(false);
+    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (b) done(b.dataset.a === 'yes'); else if (e.target === el) done(false);
+    });
+    window.addEventListener('hashchange', off);
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(el);
+    el.querySelector('[data-a=yes]').focus();
+  });
+}
 
 let toastTimer;
 function toast(msg) {
@@ -90,7 +172,9 @@ async function api(method, url, body, { pin = false } = {}) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     if (r.status === 401 && pin) { ui.pin = null; ssSet('pin', null); setTimeout(render, 0); }
-    throw new Error(data.error || `Something went wrong (${r.status})`);
+    const err = new Error(data.error || `Something went wrong (${r.status})`);
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -121,12 +205,14 @@ const sfx = {
   kaching: () => tone([988, 1319, 1760], 0.2, 'triangle', 0.08),
   newOrder: () => tone([784, 988, 1175], 0.28, 'sine', 0.16),
   bell: () => tone([1568, 1175], 0.45, 'sine', 0.2),
+  buzz: () => tone([220, 175], 0.25, 'square', 0.2),
 };
 
 // ------------------------------------------------------------------ data + live sync
 async function loadAll() {
   const [st, od] = await Promise.all([api('GET', '/api/state'), api('GET', '/api/orders')]);
   S.stores = st.stores; S.customers = st.customers; S.templates = st.templates; S.orders = od.orders;
+  S.banks = st.banks || []; S.accounts = st.accounts || [];
   S.loaded = true;
 }
 
@@ -204,6 +290,7 @@ function render() {
   else if (r.view === 'orders') html = viewOrders(r.a || lsGet('ordersStore') || 'all');
   else if (r.view === 'setup') html = viewSetup(r);
   else if (r.view === 'people') html = viewPeople();
+  else if (r.view === 'bank') html = viewBank(r.a);
   else html = viewHome();
   if (html == null) return;
   $app.innerHTML = html;
@@ -226,6 +313,7 @@ function viewHome() {
       <a class="big cashier" href="#/cashier">🧾<span>Cashier</span></a>
       <a class="big orders" href="#/orders">👨‍🍳<span>Orders</span>${open ? `<b class="badge">${open}</b>` : ''}</a>
       <a class="big people" href="#/people">🙂<span>People</span></a>
+      <a class="big bank" href="#/bank">🏦<span>Bank</span></a>
       <a class="big setup" href="#/setup">⚙️<span>Setup</span></a>
     </div>
   </div>`;
@@ -412,9 +500,9 @@ function orderCard(o, sel) {
         <span class="art">${art(l)}</span><span class="nm">${l.qty > 1 ? `${l.qty} × ` : ''}${esc(l.name)}${l.recipe ? `<small>${esc(Art.detailOf(l.builder, l.recipe))}</small>` : ''}</span><span class="tick">${l.done ? '✓' : ''}</span>
       </button></li>`).join('')}</ul>
     <div class="foot">
-      ${o.paid ? `<span class="pill paid">✅ Paid ${money(o.total)}</span>` : `<button class="pill unpaid" data-act="pay">💸 Not paid · ${money(o.total)}</button>`}
+      ${o.paid ? `<span class="pill paid">✅ ${o.paidWith?.method === 'card' ? `💳 ••${esc(o.paidWith.last4)}` : 'Paid'} ${money(o.total)}</span>` : `<button class="pill unpaid" data-act="pay">💸 Not paid · ${money(o.total)}</button>`}
       <span class="grow"></span>
-      ${o.status !== 'delivered' ? '<button class="btn ghost icon" data-act="cancel" aria-label="Cancel order">🗑️</button>' : ''}
+      <button class="btn ghost icon" data-act="cancel" aria-label="${o.status === 'delivered' ? 'Remove order' : 'Cancel order'}">🗑️</button>
       ${next}
     </div>
   </article>`;
@@ -441,7 +529,7 @@ function viewSetup(r) {
       <h3><span class="grow">🏪 Stores</span><button class="btn primary" data-act="new-store">➕ New store</button></h3>
       <div class="list">${S.stores.length ? S.stores.map((s) => `<div class="list-row">
           <span class="e">${esc(s.emoji)}</span>
-          <span class="grow">${esc(s.name)}<small>${s.items.length} items · ${s.taxRate ? `${s.taxRate}% tax` : 'no tax'} · ${s.playMoney ? 'play money' : 'tap to pay'}</small></span>
+          <span class="grow">${esc(s.name)}<small>${s.items.length} items · ${s.taxRate ? `${s.taxRate}% tax` : 'no tax'} · ${s.playMoney ? 'play money' : 'tap to pay'} · cards${s.payoutAccountId ? ' → bank' : ''}</small></span>
           <a class="btn" href="#/cashier/${s.id}">🧾 Open</a>
           <a class="btn primary" href="#/setup/store/${s.id}">✏️ Edit</a>
         </div>`).join('') : '<p class="muted">No stores yet. Tap “New store” and pick a template.</p>'}</div>
@@ -449,6 +537,10 @@ function viewSetup(r) {
     <section class="panel">
       <h3><span class="grow">🙂 People</span><a class="btn" href="#/people">Manage people</a></h3>
       <p class="muted">Customers, with their names, emoji and photos, live on the home screen under <b>People</b>, so kids can add them without the PIN.</p>
+    </section>
+    <section class="panel">
+      <h3><span class="grow">🏦 Bank</span><a class="btn" href="#/bank">Open the bank</a></h3>
+      <p class="muted">Bank accounts and debit cards live on the home screen under <b>Bank</b>. To send a store's card money into someone's account, edit the store and pick an account under “Card payments go into”.</p>
     </section>
     <section class="panel">
       <h3>🧾 Orders</h3>
@@ -494,6 +586,11 @@ function viewStoreEditor(id) {
           ${[['plain', '🏪 Plain'], ['electronics', '📺 Electronics store']].map(([k, label]) => `<button class="btn ${(d.theme || 'plain') === k ? 'primary' : ''}" data-act="theme" data-t="${k}">${label}</button>`).join('')}
         </div></div>
         <label class="toggle"><input type="checkbox" data-d="playMoney" ${d.playMoney ? 'checked' : ''}> 💵 Pay with play money (bills, coins and change)</label>
+        <label class="field">💳 Card payments go into
+          <select data-d="payoutAccountId">
+            <option value="">Nobody's account (the money just leaves the bank)</option>
+            ${S.accounts.map((a) => `<option value="${a.id}" ${d.payoutAccountId === a.id ? 'selected' : ''}>${esc(a.owner.name)} · ${esc(bankById(a.bankId)?.name || 'Bank')}</option>`).join('')}
+          </select></label>
       </section>
       <section class="panel">
         <h3><span class="grow">🗂️ Categories</span><button class="btn" data-act="cat-add">➕ Add</button></h3>
@@ -567,10 +664,29 @@ function customerModal(after) {
 function payModal(order, { fresh = false } = {}) {
   const s = storeById(order.storeId);
   const playMoney = s ? s.playMoney : true;
+  const later = `<button class="btn" data-act="later">${fresh ? '💸 Pay later' : 'Not now'}</button>`;
   const m = {
-    sticky: true, step: 'pay', given: [], change: 0,
-    get gave() { return m.given.reduce((a, v) => a + v, 0); },
+    sticky: true, step: 'pay', method: 'cash', given: [], change: 0,
+    card: null, pin: '', receipt: null, error: null,
+    get gave() { return sumOf(m.given); },
+    // Every card, with the customer's own cards first.
+    cards() {
+      const mine = (x) => (x.account.owner.name.toLowerCase() === order.customer.toLowerCase() ? 1 : 0);
+      return allCards().sort((x, y) => mine(y) - mine(x));
+    },
     render() {
+      const who = `<span class="face">${face({ photo: order.customerPhoto, emoji: order.customerEmoji })}</span> ${esc(order.customer)}`;
+      if (m.step === 'done' && order.paidWith?.method === 'card') {
+        const r = m.receipt || {};
+        return `<div class="sheet">
+          <div class="celebrate">✅</div>
+          <h2>Approved! Order #${order.number} is paid</h2>
+          <div class="change-box"><div class="card-slot">${debitCard(m.card.account, m.card.card, { small: true })}</div>
+            <div>Paid <b>${money(order.total)}</b> with the card ending in <b>${esc(order.paidWith.last4)}</b></div>
+            ${r.balanceLeft != null ? `<div>${esc(r.owner)} has <b>${money(r.balanceLeft)}</b> left in the bank 🏦</div>` : ''}</div>
+          <button class="btn huge primary" data-act="close">👍 Done</button>
+        </div>`;
+      }
       if (m.step === 'done') {
         const parts = breakdown(m.change);
         return `<div class="sheet">
@@ -588,30 +704,98 @@ function payModal(order, { fresh = false } = {}) {
           <p class="pay-total">They'll pay later 💸</p>
           <button class="btn huge primary" data-act="close">👍 Done</button></div>`;
       }
+      if (m.step === 'processing') {
+        return `<div class="sheet"><div class="card-slot inserting">${debitCard(m.card.account, m.card.card, { small: true })}</div>
+          <h2>📶 Talking to the bank…</h2><div class="thinking"><i></i><i></i><i></i></div></div>`;
+      }
+      if (m.step === 'declined') {
+        const e = m.error?.data || {};
+        const reason = e.code === 'funds' ? `${esc(m.card.account.owner.name)} only has ${money(e.balance)} in the bank, and this costs ${money(order.total)}.`
+          : e.code === 'pin' ? 'That PIN is not right 🔒'
+            : e.code === 'frozen' ? 'This card is frozen ❄️ Unfreeze it at the bank.'
+              : esc(m.error?.message || 'Something went wrong');
+        return `<div class="sheet"><div class="celebrate">❌</div><h2>Declined</h2>
+          <div class="card-slot">${debitCard(m.card.account, m.card.card, { small: true })}</div>
+          <p class="pay-total">${reason}</p>
+          <div class="row split">${later}<span class="row">
+            ${playMoney ? '<button class="btn" data-act="use-cash">💵 Pay with cash</button>' : ''}
+            <button class="btn primary" data-act="retry">🔁 Try again</button></span></div></div>`;
+      }
+      if (m.step === 'card-pin') {
+        return `<div class="sheet"><h2>🔒 Type the card's PIN</h2>
+          <div class="card-slot">${debitCard(m.card.account, m.card.card, { small: true })}</div>
+          ${pinPad(m.pin)}
+          <div class="row split"><button class="btn" data-act="retry">← Other card</button>
+            <button class="btn huge good" style="width:auto;flex:1;max-width:300px" data-act="pin-ok" ${m.pin.length === 4 ? '' : 'disabled'}>✅ OK</button></div></div>`;
+      }
+      const cards = m.cards();
+      const tabs = cards.length ? `<div class="pay-tabs">
+          <button class="${m.method === 'cash' ? 'on' : ''}" data-act="method" data-m="cash">💵 Cash</button>
+          <button class="${m.method === 'card' ? 'on' : ''}" data-act="method" data-m="card">💳 Card</button></div>` : '';
       const gave = m.gave;
       const enough = gave >= order.total;
-      return `<div class="sheet">
-        ${fresh ? `<h2>🚀 Order #${order.number} sent to the kitchen!</h2>` : `<button class="btn icon close" data-act="close" aria-label="Close">✕</button><h2>Pay for order #${order.number}</h2>`}
-        <div class="pay-total"><span class="face">${face({ photo: order.customerPhoto, emoji: order.customerEmoji })}</span> ${esc(order.customer)} pays<strong>${money(order.total)}</strong></div>
-        ${playMoney ? `
-          <div class="muted" style="text-align:center">Tap the money they give you:</div>
-          <div class="money-tray">${DENOMS.map((d) => `<button class="money ${d.kind} c${d.v}" data-act="money" data-v="${d.v}">${d.label}</button>`).join('')}</div>
-          <div class="given">${m.given.length ? m.given.map((v, i) => `<button data-act="undo" data-i="${i}" aria-label="Take back">${moneyChip(DENOMS.find((d) => d.v === v))}</button>`).join('') : '<span class="muted">No money yet</span>'}</div>
+      let body;
+      if (m.method === 'card') {
+        body = `<div class="muted center">Which card are they paying with? Tap it to put it in the card machine.</div>
+          <div class="card-picks" data-scroll="cards">${cards.map((x) => `<button class="card-pick" data-act="card" data-id="${x.card.id}">${debitCard(x.account, x.card, { small: true })}</button>`).join('')}</div>
+          <div class="row split">${later}</div>`;
+      } else {
+        body = `${playMoney ? `
+          <div class="muted center">Tap the money they give you:</div>
+          ${cashTray(m.given)}
           <div class="row split"><span class="pay-total" style="font-size:22px">They gave: <b>${money(gave)}</b></span>
             <button class="btn" data-act="exact">👌 Exact amount</button></div>
           ${enough && gave > order.total ? `<div class="change-box"><div>Change to give back: <b>${money(gave - order.total)}</b></div></div>` : ''}
-          ${!enough && gave ? `<div class="muted" style="text-align:center">Still need ${money(order.total - gave)} more</div>` : ''}
+          ${!enough && gave ? `<div class="muted center">Still need ${money(order.total - gave)} more</div>` : ''}
         ` : ''}
-        <div class="row split">
-          <button class="btn" data-act="later">${fresh ? '💸 Pay later' : 'Not now'}</button>
+        <div class="row split">${later}
           <button class="btn huge good" style="width:auto;flex:1" data-act="paid" ${playMoney && !enough ? 'disabled' : ''}>💰 Paid!</button>
-        </div>
+        </div>`;
+      }
+      return `<div class="sheet">
+        ${fresh ? `<h2>🚀 Order #${order.number} sent to the kitchen!</h2>` : `<button class="btn icon close" data-act="close" aria-label="Close">✕</button><h2>Pay for order #${order.number}</h2>`}
+        <div class="pay-total">${who} pays<strong>${money(order.total)}</strong></div>
+        ${tabs}${body}
       </div>`;
     },
+    async charge() {
+      m.step = 'processing'; drawModal();
+      const wait = new Promise((r) => setTimeout(r, 1200));
+      try {
+        const [updated] = await Promise.all([api('PATCH', `/api/orders/${order.id}`, { pay: { cardId: m.card.card.id, pin: m.pin || undefined } }), wait]);
+        m.receipt = updated.receipt;
+        delete updated.receipt;
+        Object.assign(order, updated);
+        m.step = 'done';
+        sfx.kaching();
+      } catch (e) {
+        await wait;
+        m.error = e; m.step = 'declined';
+        sfx.buzz();
+      }
+      if (ui.modal === m) drawModal();
+    },
     async act(a, el) {
-      if (a === 'money') { m.given.push(Number(el.dataset.v)); sfx.pop(); drawModal(); return; }
-      if (a === 'undo') { m.given.splice(Number(el.dataset.i), 1); drawModal(); return; }
+      if (trayAct(m, a, el)) return;
+      if (pinAct(m, a, el)) { if (m.step === 'card-pin' && m.pin.length === 4) await m.charge(); return; }
       if (a === 'exact') { m.given = breakdown(order.total).flatMap((p) => Array(p.n).fill(p.d.v)); drawModal(); return; }
+      if (a === 'method') { m.method = el.dataset.m; drawModal(); return; }
+      if (a === 'card') {
+        m.card = allCards().find((x) => x.card.id === el.dataset.id);
+        if (!m.card) return;
+        m.pin = '';
+        sfx.pop();
+        if (m.card.card.hasPin) { m.step = 'card-pin'; drawModal(); } else await m.charge();
+        return;
+      }
+      if (a === 'pin-ok') { await m.charge(); return; }
+      if (a === 'retry') {
+        const wrongPin = m.error?.data?.code === 'pin' && m.step === 'declined';
+        m.error = null; m.pin = '';
+        m.step = wrongPin ? 'card-pin' : 'pay'; m.method = 'card';
+        drawModal(); return;
+      }
+      if (a === 'use-cash') { m.error = null; m.step = 'pay'; m.method = 'cash'; drawModal(); return; }
       if (a === 'later') { if (fresh) { m.step = 'later'; drawModal(); } else closeModal(); return; }
       if (a === 'paid') {
         const updated = await api('PATCH', `/api/orders/${order.id}`, { pay: { tendered: playMoney ? m.gave : order.total } });
@@ -629,6 +813,256 @@ function payModal(order, { fresh = false } = {}) {
     },
   };
   openModal(m);
+}
+
+// ------------------------------------------------------------------ bank
+function viewBank(sel) {
+  if (!S.banks.length) {
+    setAccent('#0f766e');
+    return bar('🏦 Bank') + `<div class="center-msg"><div class="emoji">🏗️</div><h2>No banks yet</h2>
+      <button class="btn primary" data-act="bank-new">➕ Make a bank</button></div>`;
+  }
+  const bank = bankById(sel) || bankById(lsGet('bank')) || S.banks[0];
+  lsSet('bank', bank.id);
+  setAccent(bank.color);
+  const accts = S.accounts.filter((a) => a.bankId === bank.id);
+  const vault = sumOf(accts.map((a) => a.balance));
+  const nCards = sumOf(accts.map((a) => a.cards.length));
+  const tabs = S.banks.length > 1 ? `<nav class="tabs">${S.banks.map((b) => `<button class="${b.id === bank.id ? 'on' : ''}" data-act="bank-tab" data-id="${b.id}">${esc(b.emoji)} ${esc(b.name)}</button>`).join('')}</nav>` : '';
+  return bar(`${esc(bank.emoji)} ${esc(bank.name)}`,
+    `<button class="btn" data-act="bank-edit">✏️ <span>This bank</span></button><button class="btn" data-act="bank-new">➕ <span>New bank</span></button>`) +
+    tabs + `<div class="setup">
+      <section class="bank-hero">
+        <span class="logo">${esc(bank.emoji)}</span>
+        <div class="grow"><h2>${esc(bank.name)}</h2><div>${accts.length} account${accts.length === 1 ? '' : 's'} · ${nCards} card${nCards === 1 ? '' : 's'}</div></div>
+        <div class="vault"><small>Money in the vault</small><strong>${money(vault)}</strong></div>
+      </section>
+      <div class="accounts-grid">
+        ${accts.map((a) => `<button class="acct" data-act="acct" data-id="${a.id}">
+            <span class="pic">${face(a.owner)}</span><span class="nm">${esc(a.owner.name)}</span>
+            <span class="bal">${money(a.balance)}</span>
+            <span class="mini-cards">${a.cards.map((c) => `<i class="${c.frozen ? 'frozen' : ''}" style="${cardBg(c.design, bank)}"></i>`).join('')}</span>
+          </button>`).join('')}
+        <button class="acct add" data-act="acct-open"><span class="pic">➕</span><span class="nm">Open an account</span></button>
+      </div>
+    </div>`;
+}
+
+function bankModal(bank) {
+  const f = bank ? { name: bank.name, emoji: bank.emoji, color: bank.color } : { name: '', emoji: '🐷', color: '#db2777' };
+  const used = bank && S.accounts.some((a) => a.bankId === bank.id);
+  const m = {
+    render() {
+      return `<div class="sheet">
+        <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
+        <h2>${bank ? `✏️ ${esc(bank.name)}` : '🏦 New bank'}</h2>
+        <div class="preview" id="bank-pv">${debitCard({ owner: { name: 'Your name' } }, { design: 'bank' }, { bank: { ...f, name: f.name || 'My Bank' } })}</div>
+        <label class="field">Bank name<input data-f="name" value="${esc(f.name)}" maxlength="30" autocomplete="off" placeholder="Piggy Bank"></label>
+        <div class="field">Logo<div class="emoji-grid">${BANK_EMOJI.map((e) => `<button data-act="emoji" data-e="${e}" class="${e === f.emoji ? 'on' : ''}">${e}</button>`).join('')}</div></div>
+        <div class="field">Color<div class="swatches">${['#0f766e', ...COLORS].map((c) => `<button data-act="color" data-c="${c}" class="${c === f.color ? 'on' : ''}" style="background:${c}" aria-label="${c}"></button>`).join('')}</div></div>
+        <div class="row split">
+          ${bank ? `<button class="btn danger" data-act="delete" ${used ? 'disabled' : ''}>🗑️ Delete bank</button>` : '<span></span>'}
+          <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="save">✅ Save</button>
+        </div>
+        ${used ? '<p class="muted small center">To delete this bank, close its accounts first.</p>' : ''}
+      </div>`;
+    },
+    input(t) {
+      if (t.dataset.f !== 'name') return;
+      f.name = t.value;
+      const pv = document.querySelector('#bank-pv .dc-bank');
+      if (pv) pv.textContent = `${f.emoji} ${f.name || 'My Bank'}`;
+    },
+    enter() { document.activeElement?.blur(); },
+    async act(a, el) {
+      if (a === 'emoji') { f.emoji = el.dataset.e; drawModal(); return; }
+      if (a === 'color') { f.color = el.dataset.c; drawModal(); return; }
+      if (a === 'delete') {
+        if (!(await askConfirm(`Delete ${bank.name}?`, { yes: '🗑️ Delete', danger: true }))) return;
+        await api('DELETE', `/api/banks/${bank.id}`);
+        await loadAll(); closeModal(); location.hash = '#/bank'; render();
+        return;
+      }
+      if (a === 'save') {
+        if (!f.name.trim()) { toast('Give the bank a name first ✏️'); return; }
+        const body = { ...f, name: f.name.trim() };
+        const saved = bank ? await api('PUT', `/api/banks/${bank.id}`, body) : await api('POST', '/api/banks', body);
+        await loadAll(); closeModal();
+        lsSet('bank', saved.id);
+        if (route().a === saved.id) render(); else location.hash = `#/bank/${saved.id}`;
+        toast(bank ? 'Saved ✅' : `${saved.name} is open for business! 🎉`);
+      }
+    },
+  };
+  openModal(m);
+}
+
+function openAccountModal(bank) {
+  const m = {
+    who: null, gift: 0,
+    render() {
+      const have = new Set(S.accounts.filter((a) => a.bankId === bank.id).map((a) => a.customerId));
+      const people = S.customers.filter((c) => !have.has(c.id));
+      return `<div class="sheet">
+        <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
+        <h2>🎉 Open an account at ${esc(bank.emoji)} ${esc(bank.name)}</h2>
+        ${people.length ? `<div class="field">Who is it for?</div>
+          <div class="choices">${people.map((c) => `<button class="choice ${m.who === c.id ? 'on' : ''}" data-act="who" data-id="${c.id}"><span class="e">${face(c)}</span>${esc(c.name)}</button>`).join('')}</div>`
+          : '<p class="center muted">Everyone already has an account here. Add more people on the <b>People</b> page.</p>'}
+        <div class="field">Welcome gift 🎁<div class="row">${[0, 500, 1000, 2000, 5000, 10000].map((v) => `<button class="btn ${m.gift === v ? 'primary' : ''}" data-act="gift" data-v="${v}">${v ? money(v) : 'Nothing'}</button>`).join('')}</div></div>
+        <button class="btn huge primary" data-act="open" ${m.who ? '' : 'disabled'}>🏦 Open the account</button>
+      </div>`;
+    },
+    async act(a, el) {
+      if (a === 'who') { m.who = el.dataset.id; drawModal(); return; }
+      if (a === 'gift') { m.gift = Number(el.dataset.v); drawModal(); return; }
+      if (a === 'open') {
+        const acct = await api('POST', '/api/accounts', { bankId: bank.id, customerId: m.who, opening: m.gift });
+        await loadAll(); sfx.kaching();
+        closeModal(); render();
+        accountModal(acct.id);
+        toast(`Welcome to ${bank.name}, ${acct.owner.name}! 🎉`);
+      }
+    },
+  };
+  openModal(m);
+}
+
+function accountModal(id) {
+  const m = {
+    step: 'main', given: [], txns: null, design: 'bank', pin: '', pinCard: null, cashOut: 0,
+    get acct() { return S.accounts.find((a) => a.id === id); },
+    get gave() { return sumOf(m.given); },
+    async reload() {
+      try {
+        await loadAll();
+        m.txns = (await api('GET', `/api/accounts/${id}/transactions`)).transactions;
+      } catch { /* closed meanwhile */ }
+      if (ui.modal === m) drawModal();
+    },
+    go(step) { m.step = step; m.given = []; m.pin = ''; drawModal(); },
+    render() {
+      const a = m.acct;
+      const x = '<button class="btn icon close" data-act="close" aria-label="Close">✕</button>';
+      if (!a) return `<div class="sheet">${x}<h2>This account is closed</h2></div>`;
+      const bank = bankById(a.bankId);
+      const back = '<button class="btn" data-act="back">← Back</button>';
+      const name = esc(a.owner.name);
+      if (m.step === 'deposit') {
+        return `<div class="sheet">${x}<h2>💵 Put money in</h2>
+          <div class="muted center">Tap the money ${name} gives you:</div>
+          ${cashTray(m.given)}
+          <div class="row split">${back}<button class="btn huge good" style="width:auto;flex:1;max-width:400px" data-act="deposit" ${m.gave ? '' : 'disabled'}>🏦 Put ${money(m.gave)} in</button></div></div>`;
+      }
+      if (m.step === 'withdraw') {
+        const over = m.gave > a.balance;
+        return `<div class="sheet">${x}<h2>🏧 Take money out</h2>
+          <div class="pay-total">${name} has<strong>${money(a.balance)}</strong></div>
+          <div class="muted center">Tap the money they want to take:</div>
+          ${cashTray(m.given)}
+          ${over ? `<div class="center bad-text">That's more than ${name} has!</div>` : ''}
+          <div class="row split">${back}<button class="btn huge good" style="width:auto;flex:1;max-width:400px" data-act="withdraw" ${m.gave && !over ? '' : 'disabled'}>🏧 Take out ${money(m.gave)}</button></div></div>`;
+      }
+      if (m.step === 'cash-out') {
+        return `<div class="sheet"><div class="celebrate">💵</div><h2>Give ${name} ${money(m.cashOut)}</h2>
+          <div class="change-box"><div class="change-list">${breakdown(m.cashOut).map((p) => `<span class="each">${moneyChip(p.d)} × ${p.n}</span>`).join('')}</div>
+          <div>${name} has ${money(a.balance)} left in the bank</div></div>
+          <button class="btn huge primary" data-act="back">👍 Done</button></div>`;
+      }
+      if (m.step === 'new-card') {
+        return `<div class="sheet">${x}<h2>💳 New debit card</h2>
+          <div class="preview">${debitCard(a, { design: m.design, hasPin: m.pin.length === 4 })}</div>
+          <div class="field">Pick a look<div class="designs">${Object.keys(CARD_DESIGNS).map((k) => `<button class="design ${m.design === k ? 'on' : ''}" data-act="design" data-k="${k}" style="${cardBg(k, bank)}" aria-label="${k}"></button>`).join('')}</div></div>
+          <div class="field">Secret PIN <span class="muted small">(4 numbers, or leave it empty for no PIN)</span></div>
+          ${pinPad(m.pin)}
+          <div class="row split">${back}<button class="btn huge primary" style="width:auto;flex:1;max-width:400px" data-act="make-card" ${m.pin.length === 0 || m.pin.length === 4 ? '' : 'disabled'}>💳 Make the card</button></div></div>`;
+      }
+      if (m.step === 'pin') {
+        const c = a.cards.find((k) => k.id === m.pinCard);
+        if (!c) { m.step = 'main'; return m.render(); }
+        return `<div class="sheet">${x}<h2>🔑 New PIN for the card ending in ${esc(c.number.slice(-4))}</h2>
+          ${pinPad(m.pin)}
+          <div class="row split">${back}<span class="row">
+            ${c.hasPin ? '<button class="btn danger" data-act="pin-remove">No PIN</button>' : ''}
+            <button class="btn huge primary" style="width:auto" data-act="pin-save" ${m.pin.length === 4 ? '' : 'disabled'}>✅ Save PIN</button></span></div></div>`;
+      }
+      return `<div class="sheet">${x}
+        <div class="acct-head"><span class="pic">${face(a.owner)}</span>
+          <div class="grow"><h2>${name}</h2><div class="muted">${esc(bank?.emoji || '🏦')} ${esc(bank?.name || 'Bank')}</div></div>
+          <div class="bal"><small>In the bank</small><strong>${money(a.balance)}</strong></div></div>
+        <div class="row acct-actions">
+          <button class="btn good" data-act="go" data-s="deposit">💵 Put money in</button>
+          <button class="btn" data-act="go" data-s="withdraw" ${a.balance ? '' : 'disabled'}>🏧 Take money out</button>
+          <button class="btn primary" data-act="go" data-s="new-card" ${a.cards.length >= 5 ? 'disabled' : ''}>💳 New card</button>
+        </div>
+        <h3>💳 Cards</h3>
+        ${a.cards.length ? `<div class="card-list">${a.cards.map((c) => `<div class="card-item">${debitCard(a, c, { full: true })}
+            <div class="row">
+              <button class="btn" data-act="freeze" data-id="${c.id}">${c.frozen ? '☀️ Unfreeze' : '❄️ Freeze'}</button>
+              <button class="btn" data-act="card-pin" data-id="${c.id}">🔑 PIN</button>
+              <button class="btn danger" data-act="cut" data-id="${c.id}">✂️ Cut up</button>
+            </div></div>`).join('')}</div>` : '<p class="muted">No cards yet. Make one to pay at the stores!</p>'}
+        <h3>📜 History</h3>
+        <ul class="txns" data-scroll="txns">${m.txns ? (m.txns.length ? m.txns.map((t) => `<li>
+            <span class="memo">${esc(t.memo)}<small>${when(t.at)}</small></span>
+            <span class="amt ${t.amount < 0 ? 'neg' : 'pos'}">${t.amount < 0 ? '−' : '+'}${money(Math.abs(t.amount))}<small>${money(t.balance)}</small></span>
+          </li>`).join('') : '<li class="muted">Nothing yet</li>') : '<li class="muted">Loading…</li>'}</ul>
+        <div class="row"><button class="btn danger" data-act="close-acct">🗑️ Close account</button></div>
+      </div>`;
+    },
+    async act(a, el) {
+      const acct = m.acct;
+      if (!acct) return;
+      if (trayAct(m, a, el) || pinAct(m, a, el)) return;
+      const card = el.dataset.id && acct.cards.find((c) => c.id === el.dataset.id);
+      if (a === 'back') { m.go('main'); return; }
+      if (a === 'go') { m.go(el.dataset.s); return; }
+      if (a === 'design') { m.design = el.dataset.k; drawModal(); return; }
+      if (a === 'deposit') {
+        const amount = m.gave;
+        await api('POST', `/api/accounts/${id}/deposit`, { amount });
+        sfx.kaching(); toast(`${money(amount)} is in the bank 🏦`);
+        m.go('main'); await m.reload(); return;
+      }
+      if (a === 'withdraw') {
+        const amount = m.gave;
+        await api('POST', `/api/accounts/${id}/withdraw`, { amount });
+        sfx.kaching(); m.cashOut = amount;
+        m.go('cash-out'); await m.reload(); return;
+      }
+      if (a === 'make-card') {
+        await api('POST', `/api/accounts/${id}/cards`, { design: m.design, pin: m.pin || undefined });
+        sfx.kaching(); toast('Here is your new card! 💳');
+        m.go('main'); await m.reload(); return;
+      }
+      if (a === 'freeze' && card) {
+        await api('PUT', `/api/cards/${card.id}`, { frozen: !card.frozen });
+        toast(card.frozen ? 'Card works again ☀️' : 'Card frozen ❄️ It cannot pay until you unfreeze it.');
+        await m.reload(); return;
+      }
+      if (a === 'card-pin' && card) { m.pinCard = card.id; m.go('pin'); return; }
+      if (a === 'pin-save' || a === 'pin-remove') {
+        await api('PUT', `/api/cards/${m.pinCard}`, { pin: a === 'pin-save' ? m.pin : '' });
+        toast(a === 'pin-save' ? 'New PIN saved 🔑' : 'PIN removed');
+        m.go('main'); await m.reload(); return;
+      }
+      if (a === 'cut' && card) {
+        if (!(await askConfirm(`Cut up the card ending in ${card.number.slice(-4)}? ✂️`, { yes: '✂️ Cut it up', danger: true }))) return;
+        await api('DELETE', `/api/cards/${card.id}`);
+        await m.reload(); return;
+      }
+      if (a === 'close-acct') {
+        const bal = acct.balance;
+        if (!(await askConfirm(`Close ${acct.owner.name}'s account?${bal ? ` Give them their ${money(bal)} in cash.` : ''} Their cards stop working.`, { yes: '🗑️ Close it', danger: true }))) return;
+        await api('DELETE', `/api/accounts/${id}`);
+        await loadAll(); closeModal(); render();
+        toast(bal ? `Account closed. Hand over ${money(bal)} 💵` : 'Account closed');
+      }
+    },
+    onClose() { render(); },
+  };
+  openModal(m);
+  m.reload();
 }
 
 function readFile(capture) {
@@ -727,7 +1161,7 @@ function itemModal({ store, item, mode, defaultCat = null }) {
         return;
       }
       if (a === 'delete') {
-        if (!confirm(`Remove “${item.name}” from the store?`)) return;
+        if (!(await askConfirm(`Remove “${item.name}” from the store?`, { yes: '🗑️ Remove', danger: true }))) return;
         if (mode === 'setup') { ui.draft.items = ui.draft.items.filter((i) => i.id !== item.id); ui.dirty = true; }
         else { await api('DELETE', `/api/stores/${store.id}/items/${item.id}`); refresh(); }
         closeModal(); render();
@@ -809,7 +1243,7 @@ function builderModal({ store, item, recipe = null, replaceKey = null }) {
         </div>
       </div>`;
     },
-    act(a, el) {
+    async act(a, el) {
       const set = (next) => { rec = Art.normRecipe(B, next); drawModal(); };
       if (a === 'layer') {
         if (rec.layers.length >= def.max) { toast(B === 'drink' ? "The cup's full! ☕" : "That's as tall as it gets! 🥪"); return; }
@@ -831,7 +1265,7 @@ function builderModal({ store, item, recipe = null, replaceKey = null }) {
         return;
       }
       if (a === 'add-built') {
-        if (!rec.layers.length && !confirm(B === 'drink' ? 'The cup is empty. Sell an empty cup?' : 'Just bread? Sell it anyway?')) return;
+        if (!rec.layers.length && !(await askConfirm(B === 'drink' ? 'The cup is empty. Sell an empty cup?' : 'Just bread? Sell it anyway?'))) return;
         let n = 1;
         if (replaceKey) { n = ui.cart.lines[replaceKey]?.qty || 1; delete ui.cart.lines[replaceKey]; }
         addLine(item, rec, n);
@@ -919,7 +1353,7 @@ function personModal(person) {
         return;
       }
       if (a === 'delete') {
-        if (!confirm(`Remove ${person.name}?`)) return;
+        if (!(await askConfirm(`Remove ${person.name}?`, { yes: '🗑️ Remove', danger: true }))) return;
         await api('DELETE', `/api/customers/${person.id}`);
         await loadAll(); closeModal(); render();
         return;
@@ -999,10 +1433,25 @@ const ACT = {
   pay(el) { payModal(orderOf(el)); },
   async cancel(el) {
     const o = orderOf(el);
-    if (!confirm(`Cancel order #${o.number} for ${o.customer}?`)) return;
-    await api('DELETE', `/api/orders/${o.id}`);
-    S.orders = S.orders.filter((x) => x !== o);
+    const card = o.paidWith?.method === 'card' && o.status !== 'delivered';
+    const msg = o.status === 'delivered' ? `Take order #${o.number} for ${o.customer} off the list?`
+      : `Cancel order #${o.number} for ${o.customer}?${card ? ` The ${money(o.total)} goes back to their card.` : ''}`;
+    if (!(await askConfirm(msg, { yes: o.status === 'delivered' ? '🗑️ Remove' : '🗑️ Cancel order', no: 'Keep it', danger: true }))) return;
+    const r = await api('DELETE', `/api/orders/${o.id}`);
+    S.orders = S.orders.filter((x) => x.id !== o.id);
+    if (r.refunded) { toast(`↩️ ${money(o.total)} went back to the card`); await loadAll(); }
     render();
+  },
+
+  // bank (home screen, no PIN)
+  'bank-tab'(el) { location.hash = `#/bank/${el.dataset.id}`; },
+  'bank-new'() { bankModal(null); },
+  'bank-edit'() { const b = bankById(lsGet('bank')) || S.banks[0]; if (b) bankModal(b); },
+  acct(el) { accountModal(el.dataset.id); },
+  'acct-open'() {
+    const b = bankById(lsGet('bank')) || S.banks[0];
+    if (!S.customers.length) { toast('Add some people first (🙂 People on the home screen)'); return; }
+    if (b) openAccountModal(b);
   },
 
   // setup: PIN
@@ -1029,12 +1478,12 @@ const ACT = {
   // setup: main
   'new-store'() { newStoreModal(); },
   async 'clear-delivered'() {
-    if (!confirm('Remove all delivered orders?')) return;
+    if (!(await askConfirm('Remove all delivered orders?', { yes: '🧹 Clear' }))) return;
     await api('DELETE', '/api/orders?status=delivered', undefined, { pin: true });
     await loadAll(); render(); toast('Cleared 🧹');
   },
   async 'clear-all'() {
-    if (!confirm('Remove EVERY order, including open ones? Order numbers start again at #1.')) return;
+    if (!(await askConfirm('Remove EVERY order, including open ones? Order numbers start again at #1.', { yes: 'Clear all', danger: true }))) return;
     await api('DELETE', '/api/orders?status=all', undefined, { pin: true });
     await loadAll(); render(); toast('All orders cleared');
   },
@@ -1042,11 +1491,11 @@ const ACT = {
   // setup: store editor
   color(el) { ui.draft.color = el.dataset.c; ui.dirty = true; render(); },
   theme(el) { ui.draft.theme = el.dataset.t; ui.dirty = true; render(); },
-  'store-reset'() {
-    if (ui.dirty && !confirm('You have unsaved changes. Throw them away?')) return;
+  async 'store-reset'() {
+    if (ui.dirty && !(await askConfirm('You have unsaved changes. Throw them away?', { danger: true }))) return;
     const id = ui.draft.id;
     templateModal('Fresh menu from which template?', async (key) => {
-      if (!confirm('Replace all the categories and items? Items added at the register are kept.')) return;
+      if (!(await askConfirm('Replace all the categories and items? Items added at the register are kept.', { yes: 'Replace', danger: true }))) return;
       const saved = await api('POST', `/api/stores/${id}/reset`, { template: key }, { pin: true });
       S.stores = S.stores.map((s) => (s.id === saved.id ? saved : s));
       ui.draft = clone(saved); ui.dirty = false;
@@ -1073,13 +1522,13 @@ const ACT = {
     render();
     toast('Saved ✅');
   },
-  'editor-back'() {
-    if (ui.dirty && !confirm('Leave without saving your changes?')) return;
+  async 'editor-back'() {
+    if (ui.dirty && !(await askConfirm('Leave without saving your changes?', { yes: 'Leave', no: 'Stay', danger: true }))) return;
     ui.draft = null; ui.dirty = false;
     location.hash = '#/setup';
   },
   async 'store-del'() {
-    if (!confirm(`Delete ${ui.draft.name} and all its items? Orders already placed stay.`)) return;
+    if (!(await askConfirm(`Delete ${ui.draft.name} and all its items? Orders already placed stay.`, { yes: '🗑️ Delete', danger: true }))) return;
     await api('DELETE', `/api/stores/${ui.draft.id}`, undefined, { pin: true });
     S.stores = S.stores.filter((s) => s.id !== ui.draft.id);
     ui.draft = null; ui.dirty = false;

@@ -19,8 +19,10 @@ const MAX_BODY = 4 * 1024 * 1024;
 const MAX_PHOTO = 1.5 * 1024 * 1024;
 const MAX_ORDERS = 1000;
 const STATUSES = ['new', 'making', 'ready', 'delivered'];
+const MAX_TXNS = 5000;
+const CARD_DESIGNS = new Set(['bank', 'ocean', 'grape', 'lava', 'forest', 'gold', 'candy', 'night']);
 
-class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+class HttpError extends Error { constructor(status, msg, extra) { super(msg); this.status = status; this.extra = extra; } }
 const newId = () => crypto.randomBytes(5).toString('hex');
 const isId = (v) => typeof v === 'string' && /^[a-z0-9]{1,24}$/.test(v);
 const clean = (v, max = 40) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
@@ -51,9 +53,11 @@ function loadDb() {
   db = {
     version: 1, stores: [], orders: [], nextOrderNumber: 1,
     customers: [{ id: newId(), name: 'Mom', emoji: '👩' }, { id: newId(), name: 'Dad', emoji: '👨' }],
+    banks: [{ id: newId(), name: 'Play Bank', emoji: '🏦', color: '#0f766e' }],
+    accounts: [], transactions: [],
     ...(loaded || {}),
   };
-  if (!loaded) persist('init');
+  if (!loaded || !loaded.banks) persist('init');
 }
 
 function persist(what) {
@@ -164,6 +168,7 @@ async function normStore(b, old) {
     theme: b.theme === 'electronics' ? 'electronics' : 'plain',
     taxRate: clamp(Math.round((Number(b.taxRate) || 0) * 100) / 100, 0, 50),
     playMoney: b.playMoney !== false,
+    payoutAccountId: accountById(b.payoutAccountId) ? b.payoutAccountId : null,
     categories: [],
     items: [],
   };
@@ -195,6 +200,93 @@ function computeChange(total, tendered) {
   return { tendered: t, change: t - total };
 }
 
+// ---------------------------------------------------------------- bank
+// Accounts belong to a bank and a person; debit cards belong to an account.
+function findBank(id) {
+  const b = db.banks.find((x) => x.id === id);
+  if (!b) throw new HttpError(404, 'Bank not found');
+  return b;
+}
+const accountById = (id) => (id ? db.accounts.find((a) => a.id === id) : null);
+function findAccount(id) {
+  const a = accountById(id);
+  if (!a) throw new HttpError(404, 'Account not found');
+  return a;
+}
+function findCard(id) {
+  for (const account of db.accounts) {
+    const card = account.cards.find((c) => c.id === id);
+    if (card) return { account, card };
+  }
+  throw new HttpError(404, 'That card is gone');
+}
+function normBank(b, old) {
+  return {
+    id: old?.id || newId(),
+    name: clean(b.name, 30) || 'Play Bank',
+    emoji: clean(b.emoji, 16) || '🏦',
+    color: /^#[0-9a-f]{6}$/i.test(b.color) ? b.color : '#0f766e',
+  };
+}
+const normPin = (v) => {
+  if (v == null || v === '') return null;
+  if (!/^\d{4}$/.test(String(v))) throw new HttpError(400, 'A card PIN is 4 numbers');
+  return String(v);
+};
+// 16 digits starting with 4, with a valid Luhn check digit, like a real card.
+function cardNumber() {
+  const d = [4, ...Array.from({ length: 14 }, () => crypto.randomInt(10))];
+  let sum = 0;
+  for (let i = 0; i < d.length; i++) {
+    let x = d[d.length - 1 - i];
+    if (i % 2 === 0) { x *= 2; if (x > 9) x -= 9; }
+    sum += x;
+  }
+  return [...d, (10 - (sum % 10)) % 10].join('');
+}
+function addTxn(account, amount, kind, memo, extra = {}) {
+  account.balance += amount;
+  db.transactions.push({ id: newId(), accountId: account.id, kind, amount, balance: account.balance, memo: clean(memo, 80), at: new Date().toISOString(), ...extra });
+  if (db.transactions.length > MAX_TXNS) db.transactions.splice(0, db.transactions.length - MAX_TXNS);
+}
+// What clients see: card PINs never leave the server.
+const publicAccount = (a) => ({ ...a, cards: a.cards.map(({ pin, ...c }) => ({ ...c, hasPin: !!pin })) });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function chargeCard(order, cardId, pin) {
+  const { account, card } = findCard(cardId);
+  if (card.frozen) throw new HttpError(400, 'This card is frozen ❄️', { code: 'frozen' });
+  if (card.pin && String(pin ?? '') !== card.pin) { await sleep(500); throw new HttpError(400, 'Wrong PIN', { code: 'pin' }); }
+  if (account.balance < order.total) {
+    throw new HttpError(400, 'Not enough money in the bank', { code: 'funds', balance: account.balance });
+  }
+  const store = db.stores.find((s) => s.id === order.storeId);
+  const where = store ? `${store.emoji} ${store.name}` : 'Shop';
+  addTxn(account, -order.total, 'purchase', `${where} · order #${order.number}`, { orderId: order.id, cardId: card.id });
+  // Card money lands in the store's own account, if Setup picked one.
+  const payout = accountById(store?.payoutAccountId);
+  if (payout && payout !== account) {
+    addTxn(payout, order.total, 'sale', `💳 Card sale · order #${order.number} (${order.customer})`, { orderId: order.id });
+  }
+  Object.assign(order, {
+    paid: true, tendered: order.total, change: 0,
+    paidWith: { method: 'card', cardId: card.id, last4: card.number.slice(-4), accountId: account.id, bankId: account.bankId, payoutAccountId: payout && payout !== account ? payout.id : null },
+  });
+  return { owner: account.owner.name, balanceLeft: account.balance };
+}
+
+// A cancelled card order gives the money back (and takes it back out of the store's account).
+function refundCard(order) {
+  const pw = order.paidWith;
+  if (pw?.method !== 'card' || pw.refunded) return;
+  const acct = accountById(pw.accountId);
+  if (acct) addTxn(acct, order.total, 'refund', `↩️ Refund · order #${order.number}`, { orderId: order.id });
+  const payout = accountById(pw.payoutAccountId);
+  const take = payout ? Math.min(payout.balance, order.total) : 0;
+  if (take) addTxn(payout, -take, 'refund', `↩️ Refund to ${order.customer} · order #${order.number}`, { orderId: order.id });
+  pw.refunded = true;
+}
+
 function pruneOrders() {
   if (db.orders.length <= MAX_ORDERS) return;
   const extra = db.orders.length - MAX_ORDERS;
@@ -217,7 +309,10 @@ async function api(req, res, url) {
   }
 
   if (pathname === '/api/state' && method === 'GET') {
-    return send(res, 200, { rev, stores: db.stores, customers: db.customers, templates: templateList() });
+    return send(res, 200, {
+      rev, stores: db.stores, customers: db.customers, templates: templateList(),
+      banks: db.banks, accounts: db.accounts.map(publicAccount),
+    });
   }
 
   if (pathname === '/api/pin' && method === 'POST') {
@@ -289,12 +384,21 @@ async function api(req, res, url) {
     const order = db.orders.find((o) => o.id === parts[2]);
     if (!order) throw new HttpError(404, 'Order not found');
     if (method === 'DELETE') {
+      // Cancelling an open order refunds a card payment; removing a delivered one is just tidying up.
+      const refunded = order.status !== 'delivered' && order.paidWith?.method === 'card';
+      if (refunded) refundCard(order);
       db.orders = db.orders.filter((o) => o !== order);
-      persist('orders');
-      return send(res, 200, { ok: true });
+      persist(refunded ? 'state' : 'orders');
+      return send(res, 200, { ok: true, refunded });
     }
     if (method === 'PATCH') {
       const b = await readJson(req);
+      let receipt = null;
+      if (b.pay) {
+        if (order.paid) throw new HttpError(400, 'This order is already paid');
+        if (b.pay.cardId) receipt = await chargeCard(order, b.pay.cardId, b.pay.pin);
+        else Object.assign(order, { paid: true, paidWith: { method: 'cash' }, ...computeChange(order.total, b.pay.tendered) });
+      }
       if (b.status !== undefined) {
         if (!STATUSES.includes(b.status)) throw new HttpError(400, 'Unknown status');
         order.status = b.status;
@@ -305,12 +409,9 @@ async function api(req, res, url) {
         line.done = !line.done;
         if (line.done && order.status === 'new') order.status = 'making';
       }
-      if (b.pay) {
-        Object.assign(order, { paid: true, ...computeChange(order.total, b.pay.tendered) });
-      }
       order.updatedAt = new Date().toISOString();
-      persist('orders');
-      return send(res, 200, order);
+      persist(receipt ? 'state' : 'orders');
+      return send(res, 200, receipt ? { ...order, receipt } : order);
     }
   }
 
@@ -332,7 +433,7 @@ async function api(req, res, url) {
     const b = await readJson(req);
     if (!hasTemplate(b.template)) throw new HttpError(400, 'Unknown template');
     const fresh = makeStore(b.template, newId);
-    const next = { ...fresh, id: store.id, name: store.name, taxRate: store.taxRate, playMoney: store.playMoney };
+    const next = { ...fresh, id: store.id, name: store.name, taxRate: store.taxRate, playMoney: store.playMoney, payoutAccountId: store.payoutAccountId || null };
     const kids = store.items.filter((i) => i.addedBy === 'kid');
     if (kids.length) {
       const cat = myStuffCategory(next);
@@ -415,6 +516,7 @@ async function api(req, res, url) {
       const name = clean(b.name, 30);
       if (!name) throw new HttpError(400, 'Name needed');
       Object.assign(c, { name, emoji: clean(b.emoji, 16) || '🙂', photo: await resolvePhoto(b.photo, c) });
+      for (const a of db.accounts) if (a.customerId === c.id) a.owner = { name: c.name, emoji: c.emoji, photo: c.photo || null };
       persist('state');
       return send(res, 200, c);
     }
@@ -434,6 +536,105 @@ async function api(req, res, url) {
       .filter((c) => c.name);
     persist('state');
     return send(res, 200, db.customers);
+  }
+
+  // ---- bank (pretend play, no PIN; the bank tellers are kids)
+  if (pathname === '/api/banks' && method === 'POST') {
+    if (db.banks.length >= 20) throw new HttpError(400, 'That is a lot of banks already');
+    const bank = normBank(await readJson(req));
+    db.banks.push(bank);
+    persist('state');
+    return send(res, 201, bank);
+  }
+
+  if (parts[1] === 'banks' && parts.length === 3) {
+    const bank = findBank(parts[2]);
+    if (method === 'PUT') {
+      Object.assign(bank, normBank(await readJson(req), bank));
+      persist('state');
+      return send(res, 200, bank);
+    }
+    if (method === 'DELETE') {
+      if (db.accounts.some((a) => a.bankId === bank.id)) throw new HttpError(400, 'Close all its accounts first');
+      db.banks = db.banks.filter((x) => x !== bank);
+      persist('state');
+      return send(res, 200, { ok: true });
+    }
+  }
+
+  if (pathname === '/api/accounts' && method === 'POST') {
+    const b = await readJson(req);
+    const bank = findBank(b.bankId);
+    const person = db.customers.find((c) => c.id === b.customerId);
+    if (!person) throw new HttpError(400, 'Pick who the account is for');
+    if (db.accounts.some((a) => a.bankId === bank.id && a.customerId === person.id)) throw new HttpError(400, `${person.name} already has an account here`);
+    if (db.accounts.length >= 200) throw new HttpError(400, 'That is a lot of accounts already');
+    const account = {
+      id: newId(), bankId: bank.id, customerId: person.id,
+      owner: { name: person.name, emoji: person.emoji, photo: person.photo || null },
+      balance: 0, cards: [], createdAt: new Date().toISOString(),
+    };
+    db.accounts.push(account);
+    const gift = b.opening ? cents(b.opening) : 0;
+    addTxn(account, gift, 'open', gift ? 'Welcome gift 🎁' : 'Account opened 🎉');
+    persist('state');
+    return send(res, 201, publicAccount(account));
+  }
+
+  if (parts[1] === 'accounts' && parts.length >= 3) {
+    const account = findAccount(parts[2]);
+    if (parts.length === 3 && method === 'DELETE') {
+      const cashOut = account.balance;
+      db.accounts = db.accounts.filter((a) => a !== account);
+      db.transactions = db.transactions.filter((t) => t.accountId !== account.id);
+      for (const s of db.stores) if (s.payoutAccountId === account.id) s.payoutAccountId = null;
+      persist('state');
+      return send(res, 200, { ok: true, cashOut });
+    }
+    if (parts.length === 4 && parts[3] === 'transactions' && method === 'GET') {
+      const list = db.transactions.filter((t) => t.accountId === account.id).slice(-60).reverse();
+      return send(res, 200, { transactions: list });
+    }
+    if (parts.length === 4 && (parts[3] === 'deposit' || parts[3] === 'withdraw') && method === 'POST') {
+      const amount = cents((await readJson(req)).amount);
+      if (!amount) throw new HttpError(400, 'Add some money first');
+      if (parts[3] === 'withdraw') {
+        if (amount > account.balance) throw new HttpError(400, `Not enough money. There is only $${(account.balance / 100).toFixed(2)}`, { code: 'funds', balance: account.balance });
+        addTxn(account, -amount, 'withdraw', '🏧 Cash out');
+      } else {
+        addTxn(account, amount, 'deposit', '💵 Cash in');
+      }
+      persist('state');
+      return send(res, 200, publicAccount(account));
+    }
+    if (parts.length === 4 && parts[3] === 'cards' && method === 'POST') {
+      const b = await readJson(req);
+      if (account.cards.length >= 5) throw new HttpError(400, 'Five cards is the most for one account');
+      const card = {
+        id: newId(), number: cardNumber(), pin: normPin(b.pin),
+        design: CARD_DESIGNS.has(b.design) ? b.design : 'bank', frozen: false, createdAt: new Date().toISOString(),
+      };
+      account.cards.push(card);
+      persist('state');
+      return send(res, 201, publicAccount(account));
+    }
+  }
+
+  if (parts[1] === 'cards' && parts.length === 3) {
+    const { account, card } = findCard(parts[2]);
+    if (method === 'PUT') {
+      const b = await readJson(req);
+      if (b.frozen !== undefined) card.frozen = !!b.frozen;
+      if (b.pin !== undefined) card.pin = normPin(b.pin);
+      if (b.design !== undefined && CARD_DESIGNS.has(b.design)) card.design = b.design;
+      persist('state');
+      return send(res, 200, publicAccount(account));
+    }
+    if (method === 'DELETE') {
+      account.cards = account.cards.filter((c) => c !== card);
+      persist('state');
+      return send(res, 200, publicAccount(account));
+    }
   }
 
   throw new HttpError(404, 'Not found');
@@ -480,7 +681,7 @@ const server = http.createServer(async (req, res) => {
     else await statics(req, res, url);
   } catch (e) {
     if (res.headersSent) { res.end(); return; }
-    if (e instanceof HttpError) send(res, e.status, { error: e.message });
+    if (e instanceof HttpError) send(res, e.status, { error: e.message, ...(e.extra || {}) });
     else { console.error(e); send(res, 500, { error: 'Something went wrong' }); }
   }
 });

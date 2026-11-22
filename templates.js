@@ -1,5 +1,5 @@
 'use strict';
-// Starter stores. Prices are in cents. Items: { name, emoji, icon?, price?, wasPrice?, builder?, recipe? }.
+// Starter stores. kitchen: false = no kitchen orders, just checkout. Prices are in cents. Items: { name, emoji, icon?, price?, wasPrice?, builder?, recipe? }.
 // Builder items price themselves from their recipe (see public/art.js).
 const Art = require('./public/art.js');
 
@@ -40,7 +40,7 @@ const TEMPLATES = {
     ],
   },
   tech: {
-    label: 'Tech Store', name: 'Tech Store', emoji: '📺', color: '#1e3a8a', theme: 'electronics',
+    label: 'Tech Store', name: 'Tech Store', emoji: '📺', color: '#1e3a8a', theme: 'electronics', kitchen: false,
     categories: [
       ['TVs', '📺', [thing('Giant TV', '📺', 'tv', 4999, 5999), thing('Soundbar', '🔊', 'soundbar', 1999)]],
       ['Computers', '💻', [thing('Laptop', '💻', 'laptop', 3999), thing('Desktop computer', '🖥️', 'desktop', 4499, 4999),
@@ -79,7 +79,7 @@ function makeStore(key, newId) {
   const t = TEMPLATES[key] || TEMPLATES.blank;
   const store = {
     id: newId(), name: t.name, emoji: t.emoji, color: t.color, theme: t.theme || 'plain',
-    taxRate: 0, playMoney: true, categories: [], items: [],
+    taxRate: 0, playMoney: true, kitchen: t.kitchen !== false, categories: [], items: [],
   };
   for (const [name, emoji, items] of t.categories) {
     const cat = { id: newId(), name, emoji };

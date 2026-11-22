@@ -39,6 +39,7 @@ function ssSet(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionS
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (c) => (c % 100 === 0 ? `$${c / 100}` : `$${(c / 100).toFixed(2)}`);
 const storeById = (id) => S.stores.find((s) => s.id === id);
+const hasKitchen = (s) => s?.kitchen !== false; // unknown/deleted stores count as kitchen stores
 const rid = () => Math.random().toString(36).slice(2, 10).replace(/[^a-z0-9]/g, 'x');
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const route = () => { const [view = '', a = '', b = ''] = location.hash.replace(/^#\/?/, '').split('/'); return { view, a, b }; };
@@ -408,7 +409,7 @@ function viewCashier(id) {
     ? `<button class="switch" data-act="switch-store">${esc(s.emoji)} ${esc(s.name)} <span class="caret">▾</span></button>`
     : `${esc(s.emoji)} ${esc(s.name)}`;
   return `<div class="store-wrap theme-${esc(s.theme || 'plain')}">` + bar(title,
-    `<a class="btn" href="#/orders/${s.id}">👨‍🍳 <span>Orders</span>${open ? `<b>${open}</b>` : ''}</a>`) +
+    hasKitchen(s) ? `<a class="btn" href="#/orders/${s.id}">👨‍🍳 <span>Orders</span>${open ? `<b>${open}</b>` : ''}</a>` : '') +
     tabs +
     `<div class="cashier-body">
       <section class="grid">
@@ -433,16 +434,17 @@ function cartHtml(s, who) {
       ${s.taxRate ? `<dt>Subtotal</dt><dd>${money(t.subtotal)}</dd><dt>Tax (${s.taxRate}%)</dt><dd>${money(t.tax)}</dd>` : ''}
       <dt class="total">Total</dt><dd class="total">${money(t.total)}</dd>
     </dl>
-    <button class="btn huge primary" data-act="send" ${lines.length ? '' : 'disabled'}>🚀 Send Order</button>
+    <button class="btn huge primary" data-act="send" ${lines.length ? '' : 'disabled'}>${hasKitchen(s) ? '🚀 Send Order' : '🧾 Checkout'}</button>
     ${lines.length || ui.customer ? '<button class="btn ghost" data-act="clear">Start over</button>' : ''}
   </aside>`;
 }
 
 function viewOrders(sel) {
-  if (sel !== 'all' && !storeById(sel)) sel = 'all';
+  if (sel !== 'all' && !hasKitchen(storeById(sel))) sel = 'all';
   const single = sel === 'all' ? null : storeById(sel);
   setAccent(single?.color || '#2563eb');
-  const list = S.orders.filter((o) => sel === 'all' || o.storeId === sel);
+  const kitchens = S.stores.filter(hasKitchen);
+  const list = S.orders.filter((o) => (sel === 'all' || o.storeId === sel) && hasKitchen(storeById(o.storeId)));
   const col = (st) => list.filter((o) => o.status === st).sort((a, b) => a.number - b.number);
 
   const agg = new Map();
@@ -467,8 +469,9 @@ function viewOrders(sel) {
   const delivered = col('delivered').reverse();
 
   return bar('👨‍🍳 Orders',
-    `${S.stores.length > 1 ? picker : ''}
+    `${kitchens.length > 1 ? picker : ''}
      <button class="btn icon" data-act="sound" aria-label="Sound">${ui.sound ? '🔔' : '🔕'}</button>
+     <button class="btn icon" data-act="reset" aria-label="Reset play data">🧹</button>
      <a class="btn" href="#/cashier${single ? `/${single.id}` : ''}">🧾 <span>Cashier</span></a>`) +
     `<div class="orders-body">
       <aside class="to-make">
@@ -529,7 +532,7 @@ function viewSetup(r) {
       <h3><span class="grow">🏪 Stores</span><button class="btn primary" data-act="new-store">➕ New store</button></h3>
       <div class="list">${S.stores.length ? S.stores.map((s) => `<div class="list-row">
           <span class="e">${esc(s.emoji)}</span>
-          <span class="grow">${esc(s.name)}<small>${s.items.length} items · ${s.taxRate ? `${s.taxRate}% tax` : 'no tax'} · ${s.playMoney ? 'play money' : 'tap to pay'} · cards${s.payoutAccountId ? ' → bank' : ''}</small></span>
+          <span class="grow">${esc(s.name)}<small>${s.items.length} items · ${s.taxRate ? `${s.taxRate}% tax` : 'no tax'} · ${hasKitchen(s) ? 'kitchen orders' : 'checkout only'} · ${s.playMoney ? 'play money' : 'tap to pay'} · cards${s.payoutAccountId ? ' → bank' : ''}</small></span>
           <a class="btn" href="#/cashier/${s.id}">🧾 Open</a>
           <a class="btn primary" href="#/setup/store/${s.id}">✏️ Edit</a>
         </div>`).join('') : '<p class="muted">No stores yet. Tap “New store” and pick a template.</p>'}</div>
@@ -547,7 +550,7 @@ function viewSetup(r) {
       <p class="muted">${open} open, ${delivered} delivered in the last 12 hours or so.</p>
       <div class="row">
         <button class="btn" data-act="clear-delivered">🧹 Clear delivered orders</button>
-        <button class="btn danger" data-act="clear-all">Clear ALL orders and restart at #1</button>
+        <button class="btn danger" data-act="reset">🔄 Reset play data…</button>
       </div>
     </section>
     <section class="panel">
@@ -586,6 +589,7 @@ function viewStoreEditor(id) {
           ${[['plain', '🏪 Plain'], ['electronics', '📺 Electronics store']].map(([k, label]) => `<button class="btn ${(d.theme || 'plain') === k ? 'primary' : ''}" data-act="theme" data-t="${k}">${label}</button>`).join('')}
         </div></div>
         <label class="toggle"><input type="checkbox" data-d="playMoney" ${d.playMoney ? 'checked' : ''}> 💵 Pay with play money (bills, coins and change)</label>
+        <label class="toggle"><input type="checkbox" data-d="kitchen" ${hasKitchen(d) ? 'checked' : ''}> 👨‍🍳 Send orders to the kitchen (the Orders screen). Turn off for shops that hand things over at the register, like a tech store.</label>
         <label class="field">💳 Card payments go into
           <select data-d="payoutAccountId">
             <option value="">Nobody's account (the money just leaves the bank)</option>
@@ -661,10 +665,12 @@ function customerModal(after) {
   openModal(m);
 }
 
-function payModal(order, { fresh = false } = {}) {
+// checkout: a store without a kitchen. There's no "pay later"; Cancel throws the unpaid order away.
+function payModal(order, { fresh = false, checkout = false } = {}) {
   const s = storeById(order.storeId);
   const playMoney = s ? s.playMoney : true;
-  const later = `<button class="btn" data-act="later">${fresh ? '💸 Pay later' : 'Not now'}</button>`;
+  const later = checkout ? '<button class="btn" data-act="void">✕ Cancel</button>'
+    : `<button class="btn" data-act="later">${fresh ? '💸 Pay later' : 'Not now'}</button>`;
   const m = {
     sticky: true, step: 'pay', method: 'cash', given: [], change: 0,
     card: null, pin: '', receipt: null, error: null,
@@ -680,7 +686,7 @@ function payModal(order, { fresh = false } = {}) {
         const r = m.receipt || {};
         return `<div class="sheet">
           <div class="celebrate">✅</div>
-          <h2>Approved! Order #${order.number} is paid</h2>
+          <h2>Approved! ${checkout ? 'Sold! 🛍️' : `Order #${order.number} is paid`}</h2>
           <div class="change-box"><div class="card-slot">${debitCard(m.card.account, m.card.card, { small: true })}</div>
             <div>Paid <b>${money(order.total)}</b> with the card ending in <b>${esc(order.paidWith.last4)}</b></div>
             ${r.balanceLeft != null ? `<div>${esc(r.owner)} has <b>${money(r.balanceLeft)}</b> left in the bank 🏦</div>` : ''}</div>
@@ -691,7 +697,7 @@ function payModal(order, { fresh = false } = {}) {
         const parts = breakdown(m.change);
         return `<div class="sheet">
           <div class="celebrate">🎉</div>
-          <h2>Order #${order.number} is paid!</h2>
+          <h2>${checkout ? 'Sold! Hand over the stuff 🛍️' : `Order #${order.number} is paid!`}</h2>
           ${m.change > 0 ? `<div class="change-box"><div>Give back</div><strong>${money(m.change)}</strong>
               <div class="change-list">${parts.map((p) => `<span class="each">${moneyChip(p.d)} × ${p.n}</span>`).join('')}</div></div>`
             : '<div class="change-box"><strong>No change!</strong><div>They gave the exact amount 👌</div></div>'}
@@ -753,7 +759,7 @@ function payModal(order, { fresh = false } = {}) {
         </div>`;
       }
       return `<div class="sheet">
-        ${fresh ? `<h2>🚀 Order #${order.number} sent to the kitchen!</h2>` : `<button class="btn icon close" data-act="close" aria-label="Close">✕</button><h2>Pay for order #${order.number}</h2>`}
+        ${checkout ? '<h2>🧾 Checkout</h2>' : fresh ? `<h2>🚀 Order #${order.number} sent to the kitchen!</h2>` : `<button class="btn icon close" data-act="close" aria-label="Close">✕</button><h2>Pay for order #${order.number}</h2>`}
         <div class="pay-total">${who} pays<strong>${money(order.total)}</strong></div>
         ${tabs}${body}
       </div>`;
@@ -797,6 +803,11 @@ function payModal(order, { fresh = false } = {}) {
       }
       if (a === 'use-cash') { m.error = null; m.step = 'pay'; m.method = 'cash'; drawModal(); return; }
       if (a === 'later') { if (fresh) { m.step = 'later'; drawModal(); } else closeModal(); return; }
+      if (a === 'void') {
+        await api('DELETE', `/api/orders/${order.id}`);
+        S.orders = S.orders.filter((x) => x.id !== order.id);
+        closeModal(); return;
+      }
       if (a === 'paid') {
         const updated = await api('PATCH', `/api/orders/${order.id}`, { pay: { tendered: playMoney ? m.gave : order.total } });
         Object.assign(order, updated);
@@ -807,9 +818,66 @@ function payModal(order, { fresh = false } = {}) {
       }
     },
     onClose() {
-      if (fresh) { ui.cart.lines = {}; ui.customer = null; ui.askedCustomer = false; }
+      // A cancelled checkout keeps the cart so they can try again.
+      if (fresh && (!checkout || order.paid)) { ui.cart.lines = {}; ui.customer = null; ui.askedCustomer = false; }
       refresh();
       render();
+    },
+  };
+  openModal(m);
+}
+
+// Reset play data (grown-ups). Stores, menus, prices, banks and photos are always kept.
+function resetModal() {
+  const m = {
+    step: ui.pin ? 'pick' : 'pin', pin: '',
+    o: { orders: true, bankMoney: true, accounts: false, kidItems: false, people: false },
+    render() {
+      const x = '<button class="btn icon close" data-act="close" aria-label="Close">✕</button>';
+      if (m.step === 'pin') {
+        return `<div class="sheet">${x}<h2>Grown-ups only 🔒</h2>
+          <div class="pinpad inline"><div class="dots">${m.pin ? '●'.repeat(m.pin.length) : '<span class="hint">Enter the PIN</span>'}</div>
+          <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pk" data-k="${n}">${n}</button>`).join('')}
+            <button data-act="pk-back" aria-label="Delete">⌫</button><button data-act="pk" data-k="0">0</button><button data-act="pin-ok">OK</button></div></div></div>`;
+      }
+      const kid = sumOf(S.stores.map((s) => s.items.filter((i) => i.addedBy === 'kid').length));
+      const inBank = sumOf(S.accounts.map((a) => a.balance));
+      const row = (k, label, note, disabled = false) => `<label class="toggle reset-opt ${disabled ? 'off' : ''}">
+          <input type="checkbox" data-o="${k}" ${m.o[k] ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${label}<small>${note}</small></span></label>`;
+      const any = Object.values(m.o).some(Boolean);
+      return `<div class="sheet">${x}<h2>🔄 Reset play data</h2>
+        <p class="muted center">Pick what to clear. Stores, menus, prices, banks and photos are always kept.</p>
+        <div class="reset-opts">
+          ${row('orders', '🧾 All orders', `${S.orders.length} order${S.orders.length === 1 ? '' : 's'}. Order numbers start again at #1.`)}
+          ${row('bankMoney', '🏦 Empty the bank accounts', `Every account goes to $0 (${money(inBank)} in the bank now) and the history is cleared. Accounts and cards are kept.`, m.o.accounts)}
+          ${row('accounts', '💳 Close all bank accounts', `${S.accounts.length} account${S.accounts.length === 1 ? '' : 's'} and their cards are removed.`, m.o.people)}
+          ${row('kidItems', '⭐ Items added at the register', `${kid} item${kid === 1 ? '' : 's'} added with “Add my item”.`)}
+          ${row('people', '🙂 People', 'Back to just Mom and Dad. This also closes the bank accounts.')}
+        </div>
+        <button class="btn huge bad" data-act="go-reset" ${any ? '' : 'disabled'}>🔄 Reset</button>
+      </div>`;
+    },
+    input(t) {
+      if (!t.dataset.o) return;
+      m.o[t.dataset.o] = t.checked;
+      if (m.o.people) m.o.accounts = true;
+      if (m.o.accounts) m.o.bankMoney = true;
+      drawModal();
+    },
+    async act(a, el) {
+      if (a === 'pk') { if (m.pin.length < 12) m.pin += el.dataset.k; drawModal(); return; }
+      if (a === 'pk-back') { m.pin = m.pin.slice(0, -1); drawModal(); return; }
+      if (a === 'pin-ok') {
+        try { await api('POST', '/api/pin', { pin: m.pin }); } catch { m.pin = ''; drawModal(); toast('That PIN is not right'); return; }
+        ui.pin = m.pin; ssSet('pin', ui.pin);
+        m.step = 'pick'; drawModal(); return;
+      }
+      if (a === 'go-reset') {
+        if (!(await askConfirm('Reset the checked things? This can’t be undone.', { yes: '🔄 Reset', no: 'Cancel', danger: true }))) return;
+        await api('POST', '/api/reset', m.o, { pin: true });
+        await loadAll(); closeModal(); render();
+        toast('All fresh! 🧹');
+      }
     },
   };
   openModal(m);
@@ -1285,7 +1353,7 @@ function storePickerModal(view) {
       <h2>${view === 'orders' ? 'Which orders?' : 'Which store is open?'}</h2>
       <div class="choices">
         ${view === 'orders' ? tile('#/orders/all', '#475569', '🏪', 'All stores') : ''}
-        ${S.stores.map((s) => tile(view === 'orders' ? `#/orders/${s.id}` : `#/cashier/${s.id}`, s.color, s.emoji, s.name)).join('')}
+        ${S.stores.filter((s) => view !== 'orders' || hasKitchen(s)).map((s) => tile(view === 'orders' ? `#/orders/${s.id}` : `#/cashier/${s.id}`, s.color, s.emoji, s.name)).join('')}
       </div></div>`,
     act(a, el) {
       if (a !== 'go') return;
@@ -1403,8 +1471,8 @@ const ACT = {
     const lines = cartLines(s).map((l) => ({ itemId: l.item.id, qty: l.q, recipe: l.recipe || undefined }));
     const order = await api('POST', '/api/orders', { storeId: s.id, customer: ui.customer.name, customerEmoji: ui.customer.emoji, customerPhoto: ui.customer.photo || null, lines });
     S.orders.push(order);
-    sfx.newOrder();
-    payModal(order, { fresh: true });
+    if (hasKitchen(s)) sfx.newOrder();
+    payModal(order, { fresh: true, checkout: !hasKitchen(s) });
   },
   'new-item'() {
     const s = storeById(route().a);
@@ -1482,11 +1550,7 @@ const ACT = {
     await api('DELETE', '/api/orders?status=delivered', undefined, { pin: true });
     await loadAll(); render(); toast('Cleared 🧹');
   },
-  async 'clear-all'() {
-    if (!(await askConfirm('Remove EVERY order, including open ones? Order numbers start again at #1.', { yes: 'Clear all', danger: true }))) return;
-    await api('DELETE', '/api/orders?status=all', undefined, { pin: true });
-    await loadAll(); render(); toast('All orders cleared');
-  },
+  reset() { resetModal(); },
 
   // setup: store editor
   color(el) { ui.draft.color = el.dataset.c; ui.dirty = true; render(); },

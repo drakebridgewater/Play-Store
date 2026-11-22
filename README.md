@@ -12,7 +12,7 @@ A pretend-play register for kids. It has multiple mini stores, a cashier screen,
 ## Modes
 | Mode | Who | What |
 |---|---|---|
-| ⚙️ **Setup** | Grown-ups (PIN) | Create stores from templates (Coffee, Sandwich, Tech, My Own Shop, Blank), edit categories, items, pictures, photos, prices, sale prices, tax, play-money toggle, store look (plain or electronics), fresh menu from a template |
+| ⚙️ **Setup** | Grown-ups (PIN) | Create stores from templates (Coffee, Sandwich, Tech, My Own Shop, Blank), edit categories, items, pictures, photos, prices, sale prices, tax, play-money toggle, kitchen orders on/off, store look (plain or electronics), fresh menu from a template, **Reset play data** |
 | 🧾 **Cashier** | Ethan | Pick who it's for, tap items (qty +/−), see subtotal / tax / total, **Send Order** → pay with play bills and coins (see exactly what change to give back) or a **💳 debit card**. **Pay later** is also an option. **➕ Add my item** lets him sell his own stuff (photo or emoji, name, price) with no PIN |
 | 🏦 **Bank** | Anyone | Banks, accounts and debit cards. Put cash in, take cash out, make cards (with an optional 4-number PIN), freeze or cut them up, and see each account's history. No PIN |
 | 🙂 **People** | Anyone | Add, rename or remove customers, with an emoji or a photo from the tablet camera. No PIN |
@@ -26,6 +26,16 @@ The Sandwich and Coffee templates have a **Build a sandwich** / **Make a drink**
 - **Sandwich:** white or brown bread, toast it, then stack up to 8 fillings (yellow or white cheese, ham, turkey, bacon, egg, lettuce, tomato, onions, pickles, mayo, mustard, peanut butter, jelly). The picture labels each layer.
 - **Drink:** a cut-away cup like a barista chart. Pick a size and hot or iced, then fill up to 6 parts (espresso, steamed milk, milk foam, hot water, chocolate, caramel, tea), each drawn as a labelled band. Add toppings (whipped cream, marshmallows, sprinkles). It recognises classics ("It's a Cappuccino!") and names the drink.
 - The server names and prices every custom order from the recipe (rules in `public/art.js`), and the kitchen card shows the picture plus the build list.
+
+### Kitchen stores and checkout-only stores
+Each store has a **Send orders to the kitchen** setting (Setup → edit the store). It's on for the food stores and off for the **Tech Store**, where you hand things over at the register.
+- **Kitchen on:** *Send Order* puts the order on the **Orders** screen, and it can be paid now or later.
+- **Kitchen off:** the button says **Checkout**, and there's no Orders button. Pay with cash or card, and the sale is done ("Sold! Hand over the stuff"). *Cancel* throws the unpaid sale away and keeps the cart. These stores never show up on the Orders screen.
+
+Tech stores made before this setting existed are switched to checkout-only automatically (recognized by the electronics look).
+
+### Reset play data
+**🧹** on the Orders screen, or **Reset play data…** in Setup, needs the grown-up PIN. Tick what to clear: all orders (numbers restart at #1), bank balances and history, all bank accounts and cards, items added at the register, and people (back to Mom and Dad). Stores, menus, prices, banks and photos are always kept.
 
 ### Play money
 The cash tray has **$1, $2, $5, $10, $20, $50 and $100** bills (each its own color) plus 25¢, 10¢, 5¢ and 1¢ coins. Change is worked out with the fewest bills and coins, so it can include $2 bills.
@@ -58,7 +68,7 @@ Typical flow: take everyone's orders on the tablet → run to his room → open 
 ## Operations
 - **Backup:** `/mnt/user/appdata/playstore/` (`db.json` plus `photos/`; the bank lives in `db.json` too). Your normal appdata backup covers it.
 - **Update:** replace the files, then run `docker compose up -d --build`. Your data is untouched.
-- **Reset:** stop the container and delete `db.json`. Setup also has "Clear delivered orders" and "Clear ALL orders and restart at #1".
+- **Reset:** use **Reset play data** (🧹 on the Orders screen or in Setup) to clear orders, bank money, accounts, kid-added items or people. For a full wipe, stop the container and delete `db.json`. Setup also has "Clear delivered orders".
 - **Dev:** `npm run dev` serves on :8089 with data in `./data`. `npm run icons` redraws the PNG icons.
 - **Risk:** an isolated container with no network or HA changes. Rolling back means `docker compose down`.
 
@@ -73,6 +83,8 @@ Prices and money are in cents.
 - Bank (no PIN): `POST /api/banks {name, emoji, color}`, `PUT`/`DELETE /api/banks/:id` (delete only when it has no accounts). `POST /api/accounts {bankId, customerId, opening?}`, `DELETE /api/accounts/:id` (returns `cashOut`), `GET /api/accounts/:id/transactions`, `POST /api/accounts/:id/deposit|withdraw {amount}`, `POST /api/accounts/:id/cards {design?, pin?}`, `PUT /api/cards/:id {frozen?, pin?, design?}`, `DELETE /api/cards/:id`. `GET /api/state` also returns `banks` and `accounts` (with cards, minus PINs)
 - `POST /api/stores/:id/items {name, emoji, price, categoryId?, photo?}` (photo is a data: URL). Items added without the PIN stay editable without it (`PUT`/`DELETE /api/stores/:id/items/:itemId`)
 - `POST /api/customers {name, emoji, photo?}`, `PUT`/`DELETE /api/customers/:id` (no PIN)
+
+`POST /api/reset {orders?, bankMoney?, accounts?, kidItems?, people?}` (PIN) clears the chosen data.
 
 Setup writes (`POST/PUT/DELETE /api/stores`, `POST /api/stores/:id/reset {template}`, `PUT /api/customers`, `DELETE /api/orders?status=delivered|all`) need the `x-setup-pin` header.
 

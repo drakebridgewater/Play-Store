@@ -52,12 +52,18 @@ function loadDb() {
   }
   db = {
     version: 1, stores: [], orders: [], nextOrderNumber: 1,
-    customers: [{ id: newId(), name: 'Mom', emoji: '👩' }, { id: newId(), name: 'Dad', emoji: '👨' }],
+    customers: defaultPeople(),
     banks: [{ id: newId(), name: 'Play Bank', emoji: '🏦', color: '#0f766e' }],
     accounts: [], transactions: [],
     ...(loaded || {}),
   };
-  if (!loaded || !loaded.banks) persist('init');
+  // Stores made before the kitchen setting: electronics-look (tech) stores just check out.
+  let migrated = false;
+  for (const s of db.stores) if (s.kitchen === undefined) { s.kitchen = s.theme !== 'electronics'; migrated = true; }
+  if (!loaded || !loaded.banks || migrated) persist('init');
+}
+function defaultPeople() {
+  return [{ id: newId(), name: 'Mom', emoji: '👩' }, { id: newId(), name: 'Dad', emoji: '👨' }];
 }
 
 function persist(what) {
@@ -168,6 +174,7 @@ async function normStore(b, old) {
     theme: b.theme === 'electronics' ? 'electronics' : 'plain',
     taxRate: clamp(Math.round((Number(b.taxRate) || 0) * 100) / 100, 0, 50),
     playMoney: b.playMoney !== false,
+    kitchen: b.kitchen !== false,
     payoutAccountId: accountById(b.payoutAccountId) ? b.payoutAccountId : null,
     categories: [],
     items: [],
@@ -361,7 +368,8 @@ async function api(req, res, url) {
       customerPhoto: isPhotoPath(b.customerPhoto) ? b.customerPhoto : null,
       lines, subtotal, tax, total, paid,
       ...(paid ? computeChange(total, b.tendered) : { tendered: null, change: null }),
-      status: 'new', createdAt: now, updatedAt: now,
+      // Stores without a kitchen (e.g. the Tech Store) hand things over at the register.
+      status: store.kitchen === false ? 'delivered' : 'new', createdAt: now, updatedAt: now,
     };
     db.orders.push(order);
     pruneOrders();
@@ -377,6 +385,29 @@ async function api(req, res, url) {
     else throw new HttpError(400, 'status=delivered or status=all');
     if (!db.orders.length) db.nextOrderNumber = 1;
     persist('orders');
+    return send(res, 200, { ok: true });
+  }
+
+  // Reset play data. Stores, menus, prices, banks and photos are always kept.
+  if (pathname === '/api/reset' && method === 'POST') {
+    requirePin(req);
+    const b = await readJson(req);
+    if (b.orders) { db.orders = []; db.nextOrderNumber = 1; }
+    if (b.people) { db.customers = defaultPeople(); b.accounts = true; } // accounts belong to people
+    if (b.accounts) {
+      db.accounts = []; db.transactions = [];
+      for (const s of db.stores) s.payoutAccountId = null;
+    } else if (b.bankMoney) {
+      for (const a of db.accounts) a.balance = 0;
+      db.transactions = [];
+    }
+    if (b.kidItems) {
+      for (const s of db.stores) {
+        s.items = s.items.filter((i) => i.addedBy !== 'kid');
+        if (s.categories.length > 1) s.categories = s.categories.filter((c) => c.name.toLowerCase() !== 'my stuff' || s.items.some((i) => i.categoryId === c.id));
+      }
+    }
+    persist('state');
     return send(res, 200, { ok: true });
   }
 

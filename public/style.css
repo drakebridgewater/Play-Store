@@ -443,3 +443,10 @@ h1, h2, h3 { margin: 0; line-height: 1.15; }
   .bar .btn { padding: 0 12px; }
   .bank-hero .vault { text-align: left; }
 }
+
+/* reset play data */
+.reset-opts { display: grid; gap: 8px; }
+.reset-opt { align-items: flex-start; padding: 12px 14px; border-radius: 14px; background: #fff; min-height: 0; }
+.reset-opt input { flex: none; margin-top: 2px; }
+.reset-opt small { display: block; color: var(--muted); font-weight: 600; font-size: 15px; }
+.reset-opt.off { opacity: .6; }

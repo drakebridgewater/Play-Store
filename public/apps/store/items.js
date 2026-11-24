@@ -1,6 +1,7 @@
 // Item editor (kid and grown-up) and the sandwich / drink builders.
 import { Art, ITEM_EMOJI, api, art, askConfirm, closeModal, drawModal, esc, loadAll, money, openModal, refresh, render, rid, sfx, toast, ui } from '../../lib/core.js';
 import { readFile, shrinkPhoto } from '../../lib/photo.js';
+import { lookupCode, isIsbn, isProductCode } from '../../lib/lookup.js';
 import { addLine } from './cashier.js';
 
 // mode 'kid': saves straight to the server. mode 'setup': edits the Setup draft.
@@ -18,10 +19,33 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
     if (f.barcodes.includes(code)) { toast('That barcode is already on it 👍'); return; }
     if (f.barcodes.length >= 10) { toast('That is plenty of barcodes'); return; }
     f.barcodes.push(code); sfx.pop(); drawModal();
+    // A brand-new item with no name yet: find out what it is.
+    if (!item && !custom && !f.name.trim() && lookable(code)) look(code);
   };
+  const lookable = (code) => isProductCode(code) || isIsbn(code);
+  const filled = {}; // what the last lookup filled in, so a new lookup may replace it
+  // 🔎 Find the product (or book) online and fill in its name and picture.
+  async function look(code, { all = false } = {}) {
+    m.looking = true; m.note = null; drawModal();
+    const r = await lookupCode(code);
+    m.looking = false;
+    if (ui.modal !== m) return;
+    if (!r) m.note = '📡 Couldn\'t look it up right now. Give it a name and take a photo!';
+    else if (!r.found) m.note = '🤷 We couldn\'t find this one. What is it? Give it a name and take a photo!';
+    else {
+      const may = (k, empty) => all || f[k] === empty || f[k] === filled[k];
+      if (may('name', '')) f.name = filled.name = r.title.slice(0, 40).trim();
+      if (r.photo && may('photo', null)) f.photo = filled.photo = r.photo;
+      if (r.kind === 'book' && !f.icon && may('emoji', '📦')) f.emoji = filled.emoji = r.emoji || '📚';
+      m.note = `✨ It's <b>${esc(r.fullTitle || r.title)}</b>${r.size ? ` (${esc(r.size)})` : ''}! Name${r.photo ? ' and picture' : ''} filled in from ${esc(r.source)}. Now give it a price!`;
+      sfx.pop();
+    }
+    drawModal();
+  }
   const barcodeField = () => `<div class="field">📦 Barcodes <span class="muted small">(scan the package with the scanner, and it rings up this item)</span>
       <div class="row">${f.barcodes.map((c, i) => `<span class="chip">${esc(c)} <button class="chip-x" data-act="bc-del" data-i="${i}" aria-label="Remove ${esc(c)}">✕</button></span>`).join('') || '<span class="muted">None yet. Scan one now!</span>'}</div>
-      ${mode === 'setup' ? '<input data-f="bc" placeholder="…or type a barcode and press Enter" autocomplete="off" inputmode="numeric">' : ''}</div>`;
+      ${mode === 'setup' ? '<input data-f="bc" placeholder="…or type a barcode and press Enter" autocomplete="off" inputmode="numeric">' : ''}
+      ${!custom && f.barcodes.some(lookable) ? `<div class="row">${f.barcodes.filter(lookable).slice(0, 3).map((c) => `<button class="btn" data-act="look" data-code="${esc(c)}" ${m.looking ? 'disabled' : ''}>🔎 What is ${f.barcodes.filter(lookable).length > 1 ? esc(c) : 'it'}?</button>`).join('')}</div>` : ''}</div>`;
   const catChips = () => {
     const chips = mode === 'kid' && !hasMyStuff ? [{ id: null, name: 'My Stuff', emoji: '⭐' }, ...cats] : cats;
     if (chips.length < 2) return '';
@@ -32,11 +56,13 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
   const pv = () => (custom ? { builder: item.builder, recipe: item.recipe } : f);
   const m = {
     busy: false,
+    looking: false,
+    note: null,
     render() {
       return `<div class="sheet">
         <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
         <h2>${item ? '✏️ Change item' : barcode ? '📦 New item!' : mode === 'kid' ? '⭐ Add my item' : '➕ New item'}</h2>
-        ${barcode && !item ? '<p class="center muted">Nobody sells this yet. What is it? Take a photo of the box and give it a price!</p>' : ''}
+        ${m.looking ? '<p class="center muted">🔎 Looking up this barcode…</p>' : m.note ? `<p class="center muted">${m.note}</p>` : barcode && !item ? '<p class="center muted">Nobody sells this yet. What is it? Take a photo of the box and give it a price!</p>' : ''}
         <div class="preview"><div class="tile"><span class="art">${art(pv())}</span><span class="name" id="pv-name">${esc(f.name || 'Name?')}</span><span class="price">${money(f.price)}</span></div></div>
         ${custom ? `<p class="muted center">This is a custom ${item.builder}: its picture and price come from what goes in it.</p>` : `
         <div class="row" style="justify-content:center">
@@ -89,6 +115,7 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
       return true;
     },
     async act(a, el) {
+      if (a === 'look') { await look(el.dataset.code, { all: true }); return; }
       if (a === 'bc-del') { f.barcodes.splice(Number(el.dataset.i), 1); drawModal(); return; }
       if (a === 'stock') { f.stock = Math.max(0, Math.min(999, (f.stock || 0) + Number(el.dataset.d))); drawModal(); return; }
       if (a === 'emoji') { f.emoji = el.dataset.e; f.icon = null; drawModal(); return; }
@@ -134,6 +161,7 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
     },
   };
   openModal(m);
+  if (barcode && !item && lookable(barcode)) look(barcode);
 }
 
 // Custom sandwich / drink: stack layers into a labelled cut-away picture.

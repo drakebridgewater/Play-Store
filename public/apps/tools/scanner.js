@@ -3,6 +3,7 @@
 import { ui, esc, api, bar, setAccent, render, art, when } from '../../lib/core.js';
 import { printModal } from '../../lib/print.js';
 import { countryOf, checkSteps } from '../../lib/gs1.js';
+import { lookupCode } from '../../lib/lookup.js';
 
 const picOf = (info) => (info.photo || info.icon ? art({ photo: info.photo, icon: info.icon, emoji: info.emoji }) : esc(info.emoji || '❓'));
 
@@ -17,13 +18,25 @@ function detective(code) {
   </div>`;
 }
 
+// 🔎 A real book or product nobody in the Kids Hub uses yet: what it is, from the internet.
+function online(info) {
+  const o = ui.scFound;
+  if (info.kind !== 'product' || o?.code !== info.code) return null;
+  if (o.loading) return { label: info.label, detail: '🔎 Looking it up…' };
+  const r = o.r;
+  if (!r?.found) return { label: info.label, detail: r ? `${info.detail} · 🤷 We couldn't find what it is` : info.detail };
+  return { label: r.fullTitle || r.title, detail: [r.author && `by ${r.author}`, r.size, `found on ${r.source}`].filter(Boolean).join(' · '), photo: r.photo };
+}
+
 function result(info) {
   const digits = info.product ? info.code : null;
   const where = digits && countryOf(digits);
   const isLink = info.kind === 'text' && /^https?:\/\//i.test(info.code);
+  const o = online(info);
+  const head = o ? { ...info, ...o } : info;
   return `<section class="scan-result">
-    <div class="sr-head"><span class="sr-pic">${picOf(info)}</span>
-      <div class="grow"><h2>${esc(info.label)}</h2>${info.detail ? `<p>${esc(info.detail)}</p>` : ''}</div>
+    <div class="sr-head"><span class="sr-pic">${o?.photo ? `<img src="${esc(o.photo)}" alt="">` : picOf(info)}</span>
+      <div class="grow"><h2>${esc(head.label)}</h2>${head.detail ? `<p>${esc(head.detail)}</p>` : ''}</div>
       ${info.href ? `<a class="btn primary" href="${esc(info.href)}">Go to ${esc(info.go || 'it')} →</a>` : ''}</div>
     ${digits ? `<div class="sr-digits">${[...digits].map((d) => `<span>${d}</span>`).join('')}</div>
       <p class="sr-facts"><b>${esc(info.product.format)}</b> barcode${where ? ` · ${where.flag} The company signed up for it in <b>${esc(where.name)}</b> (it starts with ${where.prefix})` : ''}</p>
@@ -57,6 +70,10 @@ async function loadLog() {
 // On the Scanner screen, every scan shows up here (instead of the pop-up card).
 export function scannerScan(info) {
   ui.lastScan = info;
+  if (info.kind === 'product' && info.product?.valid) {
+    const o = ui.scFound = { code: info.code, loading: true, r: null };
+    lookupCode(info.code).then((r) => { o.r = r; o.loading = false; if (ui.lastScan === info) render(); });
+  }
   ui.scLog = null; // reload the list
   render();
   window.scrollTo(0, 0);
@@ -71,8 +88,8 @@ function reportSlip(info) {
     { t: 'text', s: 'SCAN REPORT', size: 2, bold: true, align: 'center' },
     { t: 'text', s: new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }), align: 'center' },
     { t: 'rule', ch: '=' },
-    { t: 'text', s: info.label, size: 2, bold: true },
-    ...(info.detail ? [{ t: 'text', s: info.detail }] : []),
+    { t: 'text', s: (online(info) || info).label, size: 2, bold: true },
+    ...((online(info) || info).detail ? [{ t: 'text', s: (online(info) || info).detail }] : []),
     ...(digits ? [
       { t: 'row', left: 'Type', right: info.product.format },
       ...(where ? [{ t: 'text', s: `Signed up in ${where.name} (prefix ${where.prefix})` }] : []),

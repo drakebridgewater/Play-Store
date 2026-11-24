@@ -2,6 +2,7 @@
 import { S, ui, esc, api, money, toast, openModal, drawModal, closeModal, loadAll, render, sfx, askConfirm, face, sumOf } from '../../lib/core.js';
 import { payBox } from '../../lib/paybox.js';
 import { readFile, shrinkPhoto } from '../../lib/photo.js';
+import { lookupCode, isIsbn } from '../../lib/lookup.js';
 import { printModal } from '../../lib/print.js';
 import { labelSlips, dueText } from './slips.js';
 
@@ -19,23 +20,48 @@ const BOOK_EMOJI = ['📕', '📗', '📘', '📙', '📓', '📔', '📒', '�
 export function bookModal(old, { isbn = null } = {}) {
   const f = old ? { title: old.title, author: old.author || '', emoji: old.emoji, photo: old.photo || null, isbn: old.isbn || '' } : { title: '', author: '', emoji: '📕', photo: null, isbn: isbn || '' };
   const loan = old && openLoanOf(old.id);
+  const filled = {}; // what the last lookup typed in, so a new lookup may replace it
+  // 🔎 Find the book online and fill in what's empty (or everything, when asked with the button).
+  async function look(code, { all = false } = {}) {
+    if (!isIsbn(code)) { toast('Type or scan the ISBN barcode first (it starts with 978)'); return; }
+    m.looking = true; m.note = null; drawModal();
+    const r = await lookupCode(code);
+    m.looking = false;
+    if (ui.modal !== m) return;
+    if (!r) m.note = '📡 Couldn\'t look it up right now. Type the title instead!';
+    else if (!r.found) m.note = '🤷 We couldn\'t find this book. Type its title and take a photo of the cover!';
+    else {
+      const may = (k, empty) => all || f[k] === empty || f[k] === filled[k];
+      if (may('title', '')) f.title = filled.title = r.title;
+      if (r.author && may('author', '')) f.author = filled.author = r.author;
+      if (r.photo && may('photo', null)) f.photo = filled.photo = r.photo;
+      if (r.emoji && may('emoji', '📕')) f.emoji = filled.emoji = r.emoji;
+      m.note = `✨ Found it! ${r.photo ? 'Title, author and cover' : 'Title and author'} filled in from ${esc(r.source)}.`;
+      sfx.pop();
+    }
+    drawModal();
+  }
   const m = {
     busy: false,
+    looking: false,
+    note: null,
     onScan(info) {
       if (info.ours) return false;
-      if (info.product?.format === 'ISBN' || info.kind === 'book') { f.isbn = info.code; sfx.pop(); drawModal(); return true; }
+      if (info.product?.format === 'ISBN' || info.kind === 'book') { f.isbn = info.code; sfx.pop(); drawModal(); look(info.code); return true; }
       return false;
     },
     render() {
       return `<div class="sheet">
         <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
         <h2>${old ? '✏️ Change book' : isbn ? '📚 New book!' : '➕ Add a book'}</h2>
-        ${isbn && !old ? '<p class="center muted">This book isn\'t in the library yet. Type its title and take a photo of the cover!</p>' : ''}
+        ${m.looking ? '<p class="center muted">🔎 Looking up this book…</p>' : m.note ? `<p class="center muted">${m.note}</p>` : isbn && !old ? '<p class="center muted">This book isn\'t in the library yet.</p>' : ''}
         <div class="preview"><div class="book-cover big">${bookCover(f)}</div></div>
         <div class="row" style="justify-content:center"><button class="btn" data-act="photo-cam">📷 Cover photo</button><button class="btn" data-act="photo-pick">🖼️ Pick</button>${f.photo ? '<button class="btn danger" data-act="photo-del">No photo</button>' : ''}</div>
         <label class="field">Title<input data-f="title" value="${esc(f.title)}" maxlength="80" autocomplete="off" placeholder="The Very Hungry Caterpillar"></label>
         <label class="field">Author <span class="muted small">(optional)</span><input data-f="author" value="${esc(f.author)}" maxlength="60" autocomplete="off"></label>
-        <label class="field">ISBN barcode <span class="muted small">(scan the back of the book, or leave empty for a homemade book)</span><input data-f="isbn" value="${esc(f.isbn)}" maxlength="17" inputmode="numeric" autocomplete="off"></label>
+        <div class="field"><label for="bk-isbn">ISBN barcode <span class="muted small">(scan the back of the book to fill everything in, or leave empty for a homemade book)</span></label>
+          <div class="row"><input id="bk-isbn" data-f="isbn" value="${esc(f.isbn)}" maxlength="17" inputmode="numeric" autocomplete="off" style="flex:1">
+          <button class="btn" data-act="look" ${m.looking ? 'disabled' : ''}>🔎 Look it up</button></div></div>
         <div class="field">${f.photo ? 'Picture if the photo goes missing' : 'Picture'}<div class="emoji-grid">${BOOK_EMOJI.map((e) => `<button data-act="emoji" data-e="${e}" class="${e === f.emoji ? 'on' : ''}">${e}</button>`).join('')}</div></div>
         ${loan ? `<p class="center">📤 Out with <b>${esc(person(loan.customerId)?.name || 'someone')}</b>, due ${esc(dueText(loan.dueAt))}</p>` : ''}
         <div class="row split">
@@ -44,8 +70,9 @@ export function bookModal(old, { isbn = null } = {}) {
       </div>`;
     },
     input(t) { if (t.dataset.f) f[t.dataset.f] = t.value; },
-    enter() { document.activeElement?.blur(); },
+    enter(t) { document.activeElement?.blur(); if (t?.dataset.f === 'isbn') look(f.isbn); },
     async act(a, el) {
+      if (a === 'look') { await look(f.isbn, { all: true }); return; }
       if (a === 'emoji') { f.emoji = el.dataset.e; drawModal(); return; }
       if (a === 'photo-del') { f.photo = null; drawModal(); return; }
       if (a === 'photo-cam' || a === 'photo-pick') {
@@ -71,6 +98,7 @@ export function bookModal(old, { isbn = null } = {}) {
     },
   };
   openModal(m);
+  if (isbn && !old) look(isbn);
 }
 
 // Pick books off the shelf for someone (when there's no scanner handy).

@@ -9,6 +9,7 @@ import { spyPanel, spyAdminActions } from './spy/admin.js';
 import { libraryPanel, libraryField, libraryAdminActions } from './library/admin.js';
 import { postPanel, postField, postAdminActions } from './post/admin.js';
 import { APPS } from './registry.js';
+import { camSupported, camButtonOn, setCamButton } from '../lib/camscan.js';
 
 // ------------------------------------------------------------------ setup views
 export function viewSetup(r) {
@@ -68,6 +69,12 @@ export function viewSetup(r) {
     <section class="panel">
       <h3>📱 Tablet tip</h3>
       <p>On Android, open this page in Chrome, then ⋮ → <b>Add to Home screen</b> for a full-screen app.</p>
+    </section>
+    <section class="panel">
+      <h3>📷 Camera scanner</h3>
+      <p class="muted">When the Bluetooth scanner won't connect, the 📷 button in the bottom corner scans with the tablet's camera instead: QR codes, printed labels and real barcodes all work. 🔄 switches between the front and back camera. Works on Android tablets and iPads. This setting is just for this tablet.</p>
+      ${camSupported() ? '' : `<p class="lib-warn">${window.isSecureContext ? 'This browser is too old to read barcodes with the camera.' : 'The camera only works on the secure <b>https://</b> address of the Kids Hub.'}</p>`}
+      <label class="toggle"><input type="checkbox" data-act="cam-toggle" ${camButtonOn() ? 'checked' : ''}> Show the 📷 button</label>
     </section>
   </div>`;
 }
@@ -268,6 +275,7 @@ export const setupActions = {
     if (ui.pfDirty) await savePrinter();
     printModal(await testSlip(), { title: '🧾 Test print', test: true });
   },
+  'cam-toggle'(el) { setCamButton(el.checked); },
   async 'hub-toggle'(el) {
     const id = el.dataset.id;
     const hidden = S.hub.hidden.includes(id) ? S.hub.hidden.filter((x) => x !== id) : [...S.hub.hidden, id];

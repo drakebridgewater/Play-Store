@@ -515,6 +515,9 @@ const Library = require('./server/library.js')({
   addTxn, accountById, resolvePhoto, checkCard, today,
 });
 
+// 🔎 Book and product barcode lookups live in server/lookup.js.
+const Lookup = require('./server/lookup.js')({ HttpError, send });
+
 // 🕵️ Spy HQ routes live in server/spy.js.
 const Spy = require('./server/spy.js')({
   db: () => db, HttpError, newId, isId, clean, clamp, cents, send, readJson, requirePin, pinOk, persist,
@@ -525,6 +528,7 @@ async function api(req, res, url) {
   const { pathname } = url;
   const method = req.method;
   const parts = pathname.split('/').filter(Boolean); // ['api', ...]
+  if (parts[1] === 'lookup' && await Lookup.handle(req, res, url)) return;
   if (parts[1] === 'spy' && await Spy.handle(req, res, url, parts)) return;
   if (parts[1] === 'library' && await Library.handle(req, res, url, parts)) return;
   if (parts[1] === 'post' && await Post.handle(req, res, url, parts)) return;
@@ -1069,7 +1073,7 @@ async function api(req, res, url) {
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.wasm': 'application/wasm',
 };
 
 async function serveFile(res, file, cache) {
@@ -1094,7 +1098,8 @@ async function statics(req, res, url) {
   const rel = p === '/' ? 'index.html' : p.slice(1);
   const file = path.resolve(PUBLIC_DIR, rel);
   if (!file.startsWith(PUBLIC_DIR + path.sep)) throw new HttpError(404, 'Not found');
-  return serveFile(res, file, 'no-cache');
+  // The bundled barcode reader (~1 MB) only changes with an app update: keep it for a week.
+  return serveFile(res, file, rel.startsWith('vendor/') ? 'public, max-age=604800' : 'no-cache');
 }
 
 // ---------------------------------------------------------------- server

@@ -12,6 +12,7 @@ import { libraryApp } from './apps/library/index.js';
 import { postApp } from './apps/post/index.js';
 import { ticketsApp } from './apps/tickets/index.js';
 import { setScanHandler, scanChip } from './lib/scan.js';
+import './lib/camscan.js'; // 📷 the camera scanner button
 import { printer, statusLine } from './lib/print.js';
 
 const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, library: libraryApp, post: postApp, tickets: ticketsApp, spy: spyApp, tools: toolsApp, setup: setupApp };

@@ -10,7 +10,7 @@ A home screen of pretend-play apps for kids. The first apps are the **Store** (m
 - **Devices:** works in any browser and is tablet-first. On Android, use Chrome ⋮ → *Add to Home screen* for a full-screen app.
 
 ## Home screen
-The home screen is a grid of app tiles (Store, Bank, People, Spy HQ, Scanner, QR Studio, Adding Machine) with a greeting and the time. The Store tile shows a red badge with the number of open kitchen orders. The small ⚙️ in the corner opens **Setup**.
+The home screen is a grid of app tiles (Store, Bank, People, Library, Post Office, Box Office, Spy HQ, Scanner, QR Studio, Adding Machine) with a greeting and the time. The Store tile shows a red badge with the number of open kitchen orders. The small ⚙️ in the corner opens **Setup**.
 
 In **Setup → Home screen** a grown-up can hide any app tile. A hidden app still works if you go to it another way, for example from a bookmark.
 
@@ -24,6 +24,8 @@ Tapping **Store** opens the store lobby: one big button per store (opens its reg
 - **Receipts → ↩️ Returns desk:** scan a receipt's QR code anywhere in the Store app, pick what's coming back, and the money goes back the way it was paid (onto the card, or the app shows which bills and coins to hand back). There's a printable return slip.
 - **Kitchen tickets:** printed automatically for each kitchen order if Setup → Receipt printer → **Print a kitchen ticket automatically** is on, or with 🎫 on any order card. They show the order number big, who it's for, each thing to make and a picture of custom drinks and sandwiches. Scanning a ticket moves its order along (New → Making → Ready → Delivered).
 - **🎟️ Take a number / 📣 Now serving:** a deli-style ticket with a big number, and a counter screen every tablet shows the same way. **Next, please!** rings a bell.
+- **📦 Stock:** in Setup → edit a store → an item → **Count them**, set how many are on the shelf. The register shows "3 left", sales count down, and at 0 the tile says **Sold out!** and can't be added. Cancelled sales and returns put things back. **📦 Restock** (a register button) lets the shopkeeper tap or scan items to count one more onto the shelf.
+- **🎟️ Coupons:** the register's **🎟️ Coupons** button makes money-off, percent-off or free-item coupons (for this store or any store) and prints them with a QR code. Scan one at the register and the discount shows in the cart and on the receipt (tax is worked out after the discount). Each coupon works once ("That coupon was already used"); cancelling the sale makes it usable again. Setup lists them for tidying up.
 - **📊 Today's report:** orders, things sold, cash and card, tax, returns, the total, cash in the drawer and the best sellers, for one store or all of them. It prints as an end-of-day slip.
 
 ## Modes
@@ -62,6 +64,29 @@ A network receipt printer (ESC/POS on port 9100; 80 mm with 48 or 42 letters a l
 - **Paper budget:** **Prints a day** (default 40) and **Longest slip**. When the limit is reached, kids see "The printer is resting until tomorrow" and the preview still works. Test prints don't count.
 - **Status:** Setup shows whether the printer is ready, low on paper, out of paper, has its lid open, or can't be reached. The server checks every 30 seconds and before each print. A print that fails is not retried later.
 - **Preview:** every print has an on-screen preview laid out exactly like the paper. QR codes and barcodes show as placeholders there for now; the printer draws the real ones.
+
+### 🧾 Checks (Bank)
+In a bank account, **✍️ Write a check**: who it's for, how much (it's written out in words too: "Two dollars and 00/100"), what it's for, and a **signature drawn with a finger**. It prints like a real check, with the signature and a QR code. At the **Bank**, scan the check (or tap **💰 Cash it** in the list) and put it in the payee's own account or give them play cash. The money comes out of the writer's account, and if there isn't enough it **bounces** 🏀. Each check cashes once, and can be torn up instead.
+
+### 🎟️ Box Office
+- **Make a show:** a name and picture, when it is, how many rows and seats, a ticket price (or free), a store to use as the **🍿 snack bar**, and whose account card money goes into.
+- **🎟️ Sell:** pick who the tickets are for (or scan their member card), tap seats on the **seat map** in front of the stage, and pay (cash or card; free shows skip paying). Each ticket prints with the show, **ROW B · SEAT 3**, the name and a QR code.
+- **🚪 Door:** scan tickets. "✅ Welcome, Mom! Row B, seat 3." Or ❌ "Already used!", "Wrong show!", "That show was on another day." The door counts who's inside and colors their seats on the map. A show ticket scanned on any screen goes to its door. No scanner? Tap a name to let them in.
+
+### 📚 Library
+Real books from the shelf (they already have an ISBN barcode) and homemade ones (comics, drawings) with a printed barcode label.
+- **🛎️ Desk:** scan a **member card** (People → 🪪 Member card works as a library card), then scan the books, then **Check out**. A due-date slip prints ("Please return by Tuesday, December 1"). To bring a book back, just **scan it**: a thank-you slip prints, and if it's late the desk says how many days and what the fine is, with a **💰 Pay it** button (play cash with change, or a debit card with its PIN). No scanner? Tap who's borrowing and pick books off the shelf, and use **📥 Bring a book back**.
+- **📚 Shelves:** every book with its cover photo (or a picture) and whether it's on the shelf, out, or ⏰ late. Scanning a book's barcode here (or anywhere in the Library) that isn't in yet opens **📚 New book!** with the ISBN filled in. Add homemade books with **➕ Add a book** and print their 🏷️ label.
+- **🪪 Who has what:** each person's books and due dates, late ones in red, with **🔄 Renew** (up to twice, not when late) and **📥 Return**, and their fines.
+- Due dates are **real days** (Setup → Library sets how many; 7 by default). **Late fines** are optional: so much per day late (25¢ by default, 0 turns them off, at most 30 days). Fines paid by card can go into someone's bank account, like a store's card sales. Grown-ups can **forgive** a fine, and can move a due date ("Make it 3 days late" is handy for trying fines out).
+- The Library tile shows a red badge with the number of late books. Scanning a library book anywhere else in the Kids Hub says whether it's on the shelf or who has it.
+
+### 📦 Post Office
+Mail around the house: rooms and pretend places (Grandma's House, the North Pole), each with a zone letter and a printed **door sign**.
+- **🏤 Counter:** pick (or scan the member card of) who it's **from**, who it's **to** if you like, and the **place** it goes (or scan that place's door sign). Pick a **size** (letter, small, big or giant box), put it on the **⚖️ scale** (it wobbles and settles on a weight that fits the box), and add **extras** (⚠️ fragile, ⚡ express, ✍️ signature). The postage adds up as you go; far-away places cost extra. **Pay & send** with play cash (change worked out) or a debit card (tap or scan it, then the PIN). The **shipping label** prints: big zone letter, from and to, banners for the extras, and a tracking QR code. There's also a strip of **🖼️ stamps** to print and cut apart.
+- **🚚 Mail bag:** scan parcels to put them in the bag (they go out for delivery), walk to the room and **scan its door sign**. The right door delivers everything in the bag for that place 🎉; the wrong one says "Wrong house!" and where to go instead. With a full bag, scanning a door sign on any screen delivers. No scanner? Tap **Put in bag** and the place you're at.
+- **🔎 Tracking:** every parcel's trip: 📥 Accepted → 🗂️ Sorting → 🚚 Out for delivery → ✅ Delivered, with times. Scanning a label at the counter moves it along a step.
+- **Setup → Post Office:** add, rename and remove places (up to 26, zones A–Z), mark pretend ones as far away, print door signs, set every postage price, pick whose bank account card postage goes into, and turn auto-printed labels on or off.
 
 ### 🕵️ Spy HQ
 A secret-agent app, all in a dark "night ops" look.
@@ -119,7 +144,7 @@ Typical flow: take everyone's orders on the tablet → run to his room → open 
 - **Update:** replace the files, then run `docker compose up -d --build`. Your data is untouched.
 - **Reset:** use **Reset play data** (🧹 on the Orders screen or in Setup) to clear orders, bank money, accounts, kid-added items or people. For a full wipe, stop the container and delete `db.json`. Setup also has "Clear delivered orders".
 - **Dev:** `npm run dev` serves on :8089 with data in `./data`. `npm run icons` redraws the PNG icons.
-- **Code layout:** `server.js` is the API. In the browser, `public/app.js` draws the home screen and routes to the apps. Shared helpers (state, server calls, sounds, modals, printing, scanning) are in `public/lib/`, and each app is in `public/apps/` (`store/`, `spy/`, `tools/` for Scanner, QR Studio and Adding Machine, `bank.js`, `people.js`, `setup.js`). The list of home-screen tiles is `public/apps/registry.js`. `public/art.js` (drawings) and `public/slip.js` (receipt layout) are shared with the server; `server/printer.js` turns slips into ESC/POS and `server/codes.js` looks up scanned codes and `server/spy.js` has the Spy HQ routes.
+- **Code layout:** `server.js` is the API. In the browser, `public/app.js` draws the home screen and routes to the apps. Shared helpers (state, server calls, sounds, modals, printing, scanning) are in `public/lib/`, and each app is in `public/apps/` (`store/`, `library/`, `post/`, `tickets/` for the Box Office, `checks.js`, `spy/`, `tools/` for Scanner, QR Studio and Adding Machine, `bank.js`, `people.js`, `setup.js`). The list of home-screen tiles is `public/apps/registry.js`. `public/art.js` (drawings) and `public/slip.js` (receipt layout) are shared with the server; `server/printer.js` turns slips into ESC/POS and `server/codes.js` looks up scanned codes; `server/library.js`, `server/post.js`, `server/boxoffice.js`, `server/checks.js` and `server/spy.js` have the Library, Post Office, Box Office, checks and Spy HQ routes. `public/lib/paybox.js` is the shared pay window (cash or card) the Library and Post Office use.
 - **Risk:** an isolated container with no network or HA changes. Rolling back means `docker compose down`.
 
 ## API (for HA / scripts later)
@@ -132,6 +157,11 @@ Prices and money are in cents.
 - Items accept `barcodes: [...]` (up to 10)
 - `GET /api/codes?c=<code>[&log=1]`: what a scanned code is (`kind`: person, card, receipt, ticket, item, agent, clue, secret, go, product, test, text, gone; plus `label`, `detail`, `href`). `log=1` adds it to the Scanner's list. `KH-G-<app>` codes are shortcuts (store, bank, people, spy, cipher, codebreaker, missions, vault, serving, scanner, qr, calc, home)
 - `GET /api/scanlog`: today's scan count and the latest scans
+- Stock and coupons: items accept `stock` (null = not counted). `POST /api/stores/:id/items/:itemId/stock {add}` (restock, no PIN). `POST /api/orders` accepts `couponId`; orders carry `discount {couponId, label, amount}`; a sold-out item answers 400 `code: stock`. `POST /api/coupons {storeId?, kind: amount|percent|item, value, itemId?, count}`, `DELETE /api/coupons/:id`. Codes: `KH-U-<id>`
+- Checks (`server/checks.js`): `POST /api/checks {fromAccountId, toCustomerId, amount, memo?, signature}` (signature is a PNG data URL), `POST /api/checks/:id/cash {accountId?}` (no account = cash out; 400 `code: bounced`), `POST /api/checks/:id/void`. Codes: `KH-H-<id>`
+- Box Office (`server/boxoffice.js`): `POST /api/shows`, `PUT`/`DELETE /api/shows/:id`, `POST /api/shows/:id/tickets {customerId, seats, pay?}`, `POST /api/showtickets/:id/admit {showId}` (400 `code: used | wrong | old`). `GET /api/state` includes `boxOffice`, `coupons`, `checks`. Codes: `KH-T-<id>`
+- Post Office (`server/post.js`): `GET /api/state` includes `post` (places, parcels on the way and the last 30 delivered, settings). `POST /api/post/parcels {fromId, toPersonId?, toPlaceId, size, weight, extras, pay: {method: cash, tendered} | {method: card, cardId, pin}}` (the server works out the postage), `POST /api/post/parcels/:id/advance` (up to out for delivery), `POST /api/post/parcels/:id/deliver {placeId}` (400 `code: wrong` at the wrong door). `PUT /api/post/places {places}` and `PUT /api/post/settings {rates, payoutAccountId, autoLabel}` (PIN). Codes: `KH-M-<id>` parcels, `KH-L-<id>` door signs
+- Library (`server/library.js`, no PIN unless noted): `GET /api/state` includes `library` (books, open loans, recent returns and unpaid fines, settings). `POST /api/library/books {title, author?, isbn?, emoji?, photo?}`, `PUT`/`DELETE /api/library/books/:id`. `POST /api/library/checkout {customerId, bookIds}`, `POST /api/library/return {bookId}` (returns the loan with `daysLate` and `fine`), `POST /api/library/loans/:id/renew`, `PUT /api/library/loans/:id {dueAt}` (PIN). `POST /api/library/fines/pay {loanIds, method: cash|card, tendered?, cardId?, pin?}`, `POST /api/library/fines/forgive {loanIds}` (PIN), `PUT /api/library/settings {loanDays, finePerDay, fineAccountId, autoSlips}` (PIN). `KH-B-<id>` codes and known ISBNs look up as `kind: book`
 - `POST /api/qr {kind, text, caption, emoji}` (a `wifi` code needs the PIN), `DELETE /api/qr/:id`. `GET /api/state` includes `qrCodes`
 - Spy HQ (`server/spy.js`): `GET /api/state` includes `spy` (agents, records, vaults and missions without secrets). `POST /api/spy/agents`, `PUT`/`DELETE /api/spy/agents/:id`, `POST /api/spy/records`. Vaults: `POST /api/spy/vaults` (money prizes need the PIN), `POST /api/spy/vaults/:id/try {combo}`, `/claim {accountId}`, `/lock`. Missions (PIN to build): `POST`/`PUT`/`DELETE /api/spy/missions`, `GET /api/spy/missions/:id/run?agent=`, `POST /api/spy/missions/:id/scan?agent= {clueId}`, `/reset`. `GET /api/spy/admin` (PIN) has everything, secrets included
 - `POST /api/print {slip, test?}`: print a slip (format in `public/slip.js`). No PIN, except `test: true`, which skips the daily limit. Errors: 409 off or not set up, 429 `code: limit`, 400 too long or broken, 503 `code: printer` (can't reach it, out of paper, lid open)
@@ -145,7 +175,7 @@ Prices and money are in cents.
 - `POST /api/stores/:id/items {name, emoji, price, categoryId?, photo?}` (photo is a data: URL). Items added without the PIN stay editable without it (`PUT`/`DELETE /api/stores/:id/items/:itemId`)
 - `POST /api/customers {name, emoji, photo?}`, `PUT`/`DELETE /api/customers/:id` (no PIN)
 
-`POST /api/reset {orders?, bankMoney?, accounts?, kidItems?, people?, spy?, scans?}` (PIN) clears the chosen data.
+`POST /api/reset {orders?, bankMoney?, accounts?, kidItems?, people?, spy?, scans?, library?, post?, boxOffice?, checks?}` (clearing orders also makes used coupons usable again) (PIN) clears the chosen data.
 
 Setup writes (`POST/PUT/DELETE /api/stores`, `POST /api/stores/:id/reset {template}`, `PUT /api/customers`, `DELETE /api/orders?status=delivered|all`) need the `x-setup-pin` header.
 
@@ -155,6 +185,6 @@ The bigger plan (a Kids Hub with Library, Post Office, Box Office, Spy HQ, QR St
 - [x] Item photos instead of emoji
 - [x] Drawn item pictures, custom sandwich/drink builder, people photos
 - [x] Bank accounts and debit cards; $1–$100 bills
-- [ ] Stock counts per item ("sold out!")
+- [x] Stock counts per item ("sold out!")
 - [x] Bluetooth barcode scanner: scan to ring up, price tags, member and debit cards, returns, kitchen tickets
 - [ ] HA notification or a light flash when an order is marked **Ready**

@@ -10,7 +10,7 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
   const hasMyStuff = cats.some((c) => c.name.toLowerCase() === 'my stuff');
   const custom = !!item?.builder; // builder items price themselves from their recipe
   const f = item
-    ? { name: item.name, emoji: item.emoji, icon: item.icon || null, photo: item.photo, price: item.price, wasPrice: item.wasPrice || null, categoryId: item.categoryId, barcodes: [...(item.barcodes || [])] }
+    ? { name: item.name, emoji: item.emoji, icon: item.icon || null, photo: item.photo, price: item.price, wasPrice: item.wasPrice || null, categoryId: item.categoryId, barcodes: [...(item.barcodes || [])], ...(mode === 'setup' ? { stock: item.stock ?? null } : {}) }
     : { name: '', emoji: barcode ? '📦' : '⭐', icon: null, photo: null, price: 100, wasPrice: null, categoryId: defaultCat || (mode === 'setup' ? cats[0]?.id : null), barcodes: barcode ? [barcode] : [] };
   const addBarcode = (code) => {
     code = String(code || '').trim();
@@ -62,6 +62,9 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
         ${mode === 'setup' ? `<label class="field">On sale? Old price in $ (leave empty for no sale)
           <input data-f="was" type="number" inputmode="decimal" min="0" step="0.01" value="${f.wasPrice ? (f.wasPrice / 100).toFixed(2) : ''}" placeholder="e.g. 59.99"></label>` : ''}`}
         ${barcodeField()}
+        ${mode === 'setup' && !custom ? `<div class="field">📦 Stock <span class="muted small">(how many are on the shelf; sales count down, returns and restocking count up)</span>
+          <div class="row"><label class="toggle"><input type="checkbox" data-f="track" ${f.stock != null ? 'checked' : ''}> Count them</label>
+          ${f.stock != null ? `<button class="btn" data-act="stock" data-d="-1">−</button><b class="stock-n">${f.stock}</b><button class="btn" data-act="stock" data-d="1">+</button><button class="btn" data-act="stock" data-d="10">+10</button>` : '<span class="muted">Not counted: never sells out</span>'}</div></div>` : ''}
         ${catChips()}
         <div class="row split">
           ${item ? '<button class="btn danger" data-act="delete">🗑️ Remove it</button>' : '<span></span>'}
@@ -72,6 +75,7 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
     input(t) {
       if (t.dataset.f === 'name') { f.name = t.value; const el = document.getElementById('pv-name'); if (el) el.textContent = f.name || 'Name?'; }
       if (t.dataset.f === 'was') f.wasPrice = Math.round(parseFloat(t.value) * 100) || null;
+      if (t.dataset.f === 'track') { f.stock = t.checked ? 10 : null; drawModal(); }
     },
     enter(t) {
       if (t?.dataset.f === 'bc') { addBarcode(t.value); return; }
@@ -86,6 +90,7 @@ export function itemModal({ store, item, mode, defaultCat = null, barcode = null
     },
     async act(a, el) {
       if (a === 'bc-del') { f.barcodes.splice(Number(el.dataset.i), 1); drawModal(); return; }
+      if (a === 'stock') { f.stock = Math.max(0, Math.min(999, (f.stock || 0) + Number(el.dataset.d))); drawModal(); return; }
       if (a === 'emoji') { f.emoji = el.dataset.e; f.icon = null; drawModal(); return; }
       if (a === 'icon') { f.icon = el.dataset.k; drawModal(); return; }
       if (a === 'price') { f.price = Math.max(0, f.price + Number(el.dataset.d)); drawModal(); return; }

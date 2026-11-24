@@ -179,7 +179,7 @@ export function payModal(order, { fresh = false, checkout = false, cardId = null
     },
     onClose() {
       // A cancelled checkout keeps the cart so they can try again.
-      if (fresh && (!checkout || order.paid)) { ui.cart.lines = {}; ui.customer = null; ui.askedCustomer = false; }
+      if (fresh && (!checkout || order.paid)) { ui.cart.lines = {}; ui.cart.coupon = null; ui.customer = null; ui.askedCustomer = false; }
       refresh();
       render();
     },

@@ -2,7 +2,7 @@
 
 The Play Store becomes one app in a **Kids Hub**: a tablet-style home screen of pretend-play apps that share people, play money, a Bluetooth scanner and a network receipt printer.
 
-Status: **phases 1–6 are built** (hub and code split, printer, scanner and codes, store with scan and print, Spy HQ, Scanner / QR Studio / Adding Machine). Everything else is still design. Build order is at the bottom.
+Status: **all nine phases are built** (hub and code split, printer, scanner and codes, store with scan and print, Spy HQ, Scanner / QR Studio / Adding Machine, Library, Post Office, and Box Office / checks / coupons / stock). Everything else is still design. Build order is at the bottom.
 
 **Hardware it's designed for**
 - **Scanner:** Bluetooth, 2D (reads QR codes and barcodes). Paired to the tablet, it acts as a keyboard: it types the code, then presses Enter.
@@ -75,6 +75,8 @@ Our own codes are short, uppercase and built only from characters that type the 
 | `KH-K-<id>` | kitchen ticket | QR |
 | `KH-I-<id>` | store item (price tag) | Code 128 barcode |
 | `KH-U-<id>` | coupon | QR |
+| `KH-H-<id>` | bank check | QR |
+| `KH-G-<app>` | shortcut that opens an app (QR Studio) | QR |
 | `KH-B-<id>` | library book with no ISBN | Code 128 |
 | `KH-M-<id>` | parcel tracking number | QR |
 | `KH-L-<id>` | place (a room's door sign) | QR |
@@ -149,15 +151,16 @@ Each app lists what it's for, its screens, what scanning does, what it prints, a
 **Also**
 - **Stock counts** (from the old Ideas list): items can track how many are left, and 0 shows "Sold out!". **Restock** mode: scan items to count them back in.
 
-**Data:** `item.barcodes[]`, `item.stock?`, `orders[].refunds[]`, `coupons[] {id, storeId?, kind, value, itemId?, usedAt?}`, `takeANumber {next, serving}` per store.
+**Data:** `item.barcodes[]`, `item.stock` (null = not counted), `orders[].refunds[]`, `orders[].discount`, `coupons[] {id, storeId?, kind, value, itemId?, usedAt?, orderId?}`, `queue {next, serving}` (one for the whole Store app).
+- Coupons and stock (built in phase 9): tax is on the price after the coupon; a return gives back its share of what was actually paid; cancelling a sale restores the stock and the coupon. Coupons are made at the register (🎟️ Coupons), not in Setup; Setup lists them.
 
 ### 4.2 🏦 Bank (existing, extended)
 - **Print a debit card:** the card design colors become a printed outline, with the bank name, the owner's name and photo, the last 4 digits and a QR code. Scanning the card at any till picks it.
 - **ATM slip:** prints after a deposit or withdrawal, with the amount and the new balance.
 - **Mini statement:** the last 10 transactions.
-- **Checkbook:** write a check (to someone, an amount, a "signature" typed or drawn) and print it with a QR code. Scanning it at the Bank **cashes** it: money moves from the writer to the person it's made out to, and it's declined if there isn't enough. Each check can only be cashed once.
+- **Checkbook:** write a check (to someone, an amount written in numbers and words, a memo, a signature drawn with a finger) and print it with a QR code (`KH-H`). Scanning it at the Bank **cashes** it: money moves from the writer to the person it's made out to, and it's declined if there isn't enough. Each check can only be cashed once.
 
-**Data:** `checks[] {id, fromAccountId, toCustomerId, amount, memo, cashedAt?}`.
+**Data:** `checks[] {id, number, fromAccountId, toCustomerId, amount, memo, signature, cashedAt?, cashedInto?, voidAt?}`. Cashing goes into one of the payee's own accounts, or out as play cash; a check bounces if the writer is short.
 
 ### 4.3 📚 Library
 **Screens:** *Front desk* (check out and return), *Shelves* (all books, with cover photos), *Cards* (who has what), and Setup → Library.
@@ -166,22 +169,23 @@ Each app lists what it's for, its screens, what scanning does, what it prints, a
 - **Return:** just scan the book. A "Thank you!" slip prints, and if it's late, it shows the fine.
 - **Fines** (optional, grown-up setting): an amount per late day, paid at the desk with cash or a card. The money goes to the Library's chosen account, like the store's *Card payments go into*.
 - The *Cards* screen shows each person's books and highlights late ones in red.
-- **Loan length** is a setting (default 7 days). Days are real days, so the due date means something.
+- **Loan length** is a setting (default 7 days). Days are real days, so the due date means something. A book is due at the end of its due day; returning it the next day is 1 day late. Fines stop growing after 30 days.
+- (Built in phase 7. Also: renew up to twice if not late; grown-ups can move due dates and forgive fines; slips print automatically when the printer is set up, which Setup can turn off. Member cards from People double as library cards.)
 
-**Data:** `books[] {id, isbn?, code, title, author?, photo?, emoji}`, `loans[] {id, bookId, customerId, outAt, dueAt, inAt?, fine?}`, `library {loanDays, finePerDay, fineAccountId?}`.
+**Data:** `library.books[] {id, isbn?, title, author?, photo?, emoji}`, `library.loans[] {id, bookId, customerId, outAt, dueAt, inAt?, renewals, daysLate?, fine, finePaid}`, `library.settings {loanDays, finePerDay, fineAccountId?, autoSlips}`. Book codes are `KH-B-<id>`.
 
 ### 4.4 📦 Post Office
-**Places:** Setup → Post Office has a list of places: the rooms of the house and pretend places (Grandma's, the North Pole). Each place gets a printed **door sign** with a QR code.
+**Places:** Setup → Post Office has a list of places: the rooms of the house and pretend places (Grandma's, the North Pole). Each place gets a printed **door sign** with a QR code. It starts with eight (Kitchen, Living Room, Bedroom, Bathroom, Front Door, Garage, Grandma's House, The North Pole); zone letters follow the list order. A place with a parcel on its way can't be removed.
 
 **Counter:** pick *From* (scan a member card or tap a person) and *To* (a person or place). Pick a size (letter, small, big, giant), weigh it on a pretend scale (drag a dial, or tap "weigh"), and add extras (Fragile, Express, Signature). Postage is worked out from the size, weight and extras, and paid like a store sale.
 
 **Printing:** a **shipping label** with from and to in big letters, the destination's zone letter in a big black box, extras as banners (FRAGILE ⚠), and the tracking QR code. **Stamps** can be printed as a strip of little drawn stamps.
 
 **Tracking:** the parcel moves Accepted → Sorting → Out for delivery → Delivered. Scanning the label at the counter moves it a step.
-**Mail carrier mode:** scan a parcel, walk it to the room, and scan the **door sign**. If it's the right place, it's Delivered with a cheer. If not, "Wrong house! This goes to the Kitchen."
+**Mail carrier mode (the mail bag):** scan parcels into the bag (that moves them to Out for delivery), walk to a room, and scan the **door sign**. Everything in the bag for that place is Delivered with a cheer. If nothing is for that place: "Wrong house!" and where they do go. With a full bag, a door sign scanned on any screen delivers.
 **Track a parcel:** scan the label anywhere to see its trip as a timeline.
 
-**Data:** `places[] {id, name, emoji, zone}`, `parcels[] {id, fromId, toId, toKind, size, weight, extras[], postage, status, events[] {at, status, placeId?}}`, `post {rates}`.
+**Data:** `post.places[] {id, name, emoji, zone, far}`, `post.parcels[] {id, fromId, fromName, toPersonId?, toName?, toPlaceId, size, weight, extras[], postage, paidWith, status, events[] {at, status, placeId?}}`, `post.settings {rates, payoutAccountId, autoLabel}`. Postage: size + 1 pound free then per pound + extras + far away (all prices in Setup).
 
 ### 4.5 🎟️ Box Office
 **Make a show (no PIN):** name, emoji or picture, date and time, number of seats (rows × seats, up to 8 × 10), and a price, which can be free.
@@ -189,7 +193,7 @@ Each app lists what it's for, its screens, what scanning does, what it prints, a
 **Door mode:** scan tickets at the door. ✅ "Welcome! Row B, seat 3" or ❌ "Already used", "Wrong show" or "That show was yesterday". It shows a live count of how many people are in.
 **Snack bar:** link a Store as the show's snack bar so the door screen has a button to it.
 
-**Data:** `shows[] {id, name, emoji, at, rows, seatsPerRow, price, storeId?}`, `tickets[] {id, showId, customerId, seat, paidBy, usedAt?}`.
+**Data:** `boxOffice.shows[] {id, name, emoji, at, rows, seatsPerRow, price, storeId?, payoutAccountId?}`, `boxOffice.tickets[] {id, showId, customerId, name, seat, price, paidBy, usedAt?}`. A show ticket scanned on any screen goes to its show's door.
 
 ### 4.6 🔍 Scanner
 A "what is this?" machine.
@@ -272,7 +276,10 @@ server/printer.js      ESC/POS writer, queue, status (built)
 public/slip.js         slip format: cleaning, wrap, layout, size check; shared by browser and server (built)
 server/codes.js        /api/codes lookup across all apps (built)
 server/spy.js          Spy HQ routes (built)
-server/apps/*.js       library, post, tickets  (each exports its routes)
+server/library.js      Library routes (built)
+server/post.js         Post Office routes (built)
+server/boxoffice.js    Box Office routes (built)
+server/checks.js       bank checks (built)
 public/index.html      loads app.js as type="module"
 public/app.js          router and hub (built)
 public/apps/registry.js  hub tiles: id, name, emoji, color, link (built)
@@ -289,7 +296,11 @@ public/lib/gs1.js      barcode country prefixes, check digits (built)
 public/apps/store/     index (lobby), cashier, orders, pay, items, common (built)
 public/apps/spy/       index (HQ, agents), codebreaker, cipher, ciphers, vault, missions, admin (Setup), slips (built)
 public/apps/tools/     scanner, qrstudio, calc (built)
-public/apps/*.js       bank, people, setup (built); library, post, tickets
+public/apps/library/   index (desk, shelves, who has what), modals (book, fines), slips, admin (Setup) (built)
+public/apps/post/      index (counter, mail bag, tracking), slips (label, door signs, stamps), admin (Setup) (built)
+public/lib/paybox.js   pay window for any amount: cash with change or debit card (built)
+public/apps/tickets/   Box Office: shows, seat map, selling, door (built)
+public/apps/*.js       bank, checks, people, setup (built)
 public/art.js          (existing) plus new drawings: books, parcels, stamps, safe, tickets
 ```
 - `db.json` goes to `version: 2`. New lists start empty, existing data is untouched, and IDs keep their format.
@@ -308,9 +319,9 @@ Each phase ends usable on the tablet.
 | 4 ✅ | **Store with scan and print.** Scan to ring up, new-item-from-barcode, member and debit cards printed and scannable, receipts, kitchen tickets, returns desk, price tags, take a number, end-of-day report. | A whole pretend shop day runs with the scanner and printer. |
 | 5 ✅ | **Spy HQ.** Badge, Code Breaker, Cipher Lab, Vault, Missions. | A grown-up can build a 5-clue mission that ends in the vault. (Tested end to end in the browser with simulated scans.) |
 | 6 ✅ | **Standalone tools.** Scanner, QR Studio (with the on-screen QR encoder), Adding Machine. | Each works on its own with scan and print. (The QR encoder matches the `qrcode` npm package bit for bit for versions 1–10 and decodes with jsQR; Code 128 matches JsBarcode. Both libraries were used only for testing, outside the project.) |
-| 7 | **Library.** | Books check out and back in with slips and optional fines. |
-| 8 | **Post Office.** | A parcel goes from counter to door sign with a label and tracking. |
-| 9 | **Box Office, checks, coupons, stock.** | Tickets sell and scan at the door; checks cash; coupons and stock work. |
+| 7 ✅ | **Library.** | Books check out and back in with slips and optional fines. (Tested in the browser: scan-to-borrow, late return, fines by card and by cash, renew, the no-scanner path.) |
+| 8 ✅ | **Post Office.** | A parcel goes from counter to door sign with a label and tracking. (Tested in the browser: scanned and tapped addresses, weighing, cash and card postage, wrong and right doors, the no-scanner path.) |
+| 9 ✅ | **Box Office, checks, coupons, stock.** | Tickets sell and scan at the door; checks cash; coupons and stock work. (Tested in the browser end to end.) |
 
 Phases 5–9 don't depend on each other after phase 4, so they can be reordered by what he's most into.
 

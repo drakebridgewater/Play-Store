@@ -9,7 +9,7 @@ const KINDS = {
   message: { e: '💬', name: 'Message' }, emoji: { e: '😀', name: 'Emoji' }, secret: { e: '🕵️', name: 'Secret' },
   link: { e: '🔗', name: 'Open an app' }, wifi: { e: '📶', name: 'Wi-Fi (grown-ups)' },
 };
-const LINKS = [['store', '🏪 Store'], ['bank', '🏦 Bank'], ['people', '🙂 People'], ['spy', '🕵️ Spy HQ'], ['cipher', '🌀 Cipher Lab'], ['codebreaker', '🔢 Code Breaker'],
+const LINKS = [['store', '🏪 Store'], ['bank', '🏦 Bank'], ['people', '🙂 People'], ['library', '📚 Library'], ['post', '📦 Post Office'], ['tickets', '🎟️ Box Office'], ['carrier', '🚚 Mail bag'], ['spy', '🕵️ Spy HQ'], ['cipher', '🌀 Cipher Lab'], ['codebreaker', '🔢 Code Breaker'],
   ['missions', '🗺️ Missions'], ['vault', '🔐 Vaults'], ['serving', '📣 Now Serving'], ['scanner', '🔍 Scanner'], ['qr', '🔳 QR Studio'], ['calc', '🧮 Adding Machine'], ['home', '🏠 Home screen']];
 const EMOJI = ['😀', '😂', '🥰', '😎', '🤪', '🥳', '😺', '🐶', '🦄', '🐉', '🦖', '🐙', '🌈', '⭐', '🔥', '❤️', '💩', '👻', '👽', '🤖', '🍕', '🍦', '🍩', '🎂', '⚽', '🚀', '🎉', '🎁', '👑', '💎', '🏆', '👋'];
 

@@ -156,6 +156,11 @@ export async function loadAll() {
   S.queue = st.queue || { next: 1, serving: 0 };
   S.spy = st.spy || null;
   S.qrCodes = st.qrCodes || [];
+  S.library = st.library || null;
+  S.post = st.post || null;
+  S.boxOffice = st.boxOffice || { shows: [], tickets: [] };
+  S.coupons = st.coupons || [];
+  S.checks = st.checks || [];
   S.loaded = true;
 }
 
@@ -201,6 +206,7 @@ export function drawModal() {
   if (!ui.modal) return;
   const keep = [...$modal.querySelectorAll('.sheet, [data-scroll]')].map((el) => [el.dataset.scroll || 'sheet', el.scrollTop]);
   $modal.innerHTML = ui.modal.render();
+  ui.modal.afterDraw?.($modal);
   for (const [k, top] of keep) {
     const el = k === 'sheet' ? $modal.querySelector('.sheet') : $modal.querySelector(`[data-scroll="${k}"]`);
     if (el) el.scrollTop = top;

@@ -2,6 +2,7 @@
 import { S, api, askConfirm, bar, closeModal, drawModal, esc, face, loadAll, lsGet, lsSet, money, openModal, render, route, setAccent, sfx, sumOf, toast, ui, when } from '../lib/core.js';
 import { breakdown, cashTray, moneyChip, pinAct, pinPad, trayAct } from '../lib/cash.js';
 import { printModal, emojiImage } from '../lib/print.js';
+import { checkWriter, cashCheckModal } from './checks.js';
 
 // ------------------------------------------------------------------ bank helpers
 export const bankById = (id) => S.banks.find((b) => b.id === id);
@@ -61,6 +62,8 @@ export function viewBank(sel) {
           </button>`).join('')}
         <button class="acct add" data-act="acct-open"><span class="pic">➕</span><span class="nm">Open an account</span></button>
       </div>
+      ${(S.checks || []).filter((c) => !c.cashedAt && !c.voidAt).length ? `<section class="panel"><h3>🧾 Checks waiting to be cashed <span class="muted small">(or scan one)</span></h3>
+        <div class="list">${S.checks.filter((c) => !c.cashedAt && !c.voidAt).map((c) => `<div class="list-row"><span class="e">🧾</span><span class="grow">${money(c.amount)} from ${esc(c.fromName)} to ${esc(c.toName)}<small>No. ${c.number}${c.memo ? ` · ${esc(c.memo)}` : ''}</small></span><button class="btn primary" data-act="check-cash" data-id="${c.id}">💰 Cash it</button></div>`).join('')}</div></section>` : ''}
     </div>`;
 }
 
@@ -210,6 +213,7 @@ export function accountModal(id) {
           <button class="btn good" data-act="go" data-s="deposit">💵 Put money in</button>
           <button class="btn" data-act="go" data-s="withdraw" ${a.balance ? '' : 'disabled'}>🏧 Take money out</button>
           <button class="btn primary" data-act="go" data-s="new-card" ${a.cards.length >= 5 ? 'disabled' : ''}>💳 New card</button>
+          <button class="btn" data-act="write-check">✍️ Write a check</button>
         </div>
         <h3>💳 Cards</h3>
         ${a.cards.length ? `<div class="card-list">${a.cards.map((c) => `<div class="card-item">${debitCard(a, c, { full: true })}
@@ -234,6 +238,7 @@ export function accountModal(id) {
       const card = el.dataset.id && acct.cards.find((c) => c.id === el.dataset.id);
       if (a === 'back') { m.go('main'); return; }
       if (a === 'go') { m.go(el.dataset.s); return; }
+      if (a === 'write-check') { checkWriter(acct, () => { openModal(m); m.reload(); }); return; }
       if (a === 'design') { m.design = el.dataset.k; drawModal(); return; }
       if (a === 'deposit') {
         const amount = m.gave;
@@ -296,7 +301,12 @@ export const bankActions = {
   },
 };
 
-export const bankApp = { views: { bank: (r) => viewBank(r.a) }, actions: bankActions };
+export const bankApp = {
+  views: { bank: (r) => viewBank(r.a) },
+  actions: { ...bankActions, 'check-cash'(el) { cashCheckModal(el.dataset.id); } },
+  // At the Bank, scanning a check cashes it.
+  onScan(info) { if (info.kind !== 'check' || ui.modal) return false; cashCheckModal(info.id); return true; },
+};
 
 // A paper debit card. Its QR code picks the card at any register; the PIN is still asked for.
 export function debitCardSlip(account, card) {

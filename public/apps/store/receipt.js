@@ -24,10 +24,9 @@ export function receiptSlip(order, extra = {}) {
     if (l.recipe) parts.push({ t: 'text', s: `   ${Art.detailOf(l.builder, l.recipe)}` });
   }
   parts.push({ t: 'rule' });
-  if (order.tax) {
-    parts.push({ t: 'row', left: 'Subtotal', right: $(order.subtotal) });
-    parts.push({ t: 'row', left: `Tax (${s.taxRate}%)`, right: $(order.tax) });
-  }
+  if (order.tax || order.discount) parts.push({ t: 'row', left: 'Subtotal', right: $(order.subtotal) });
+  if (order.discount) parts.push({ t: 'row', left: `Coupon: ${order.discount.label}`, right: `-${$(order.discount.amount)}` });
+  if (order.tax) parts.push({ t: 'row', left: `Tax (${s.taxRate}%)`, right: $(order.tax) });
   parts.push({ t: 'row', left: 'TOTAL', right: $(order.total), size: 2, bold: true });
   if (!order.paid) {
     parts.push({ t: 'text', s: 'NOT PAID YET - pay later', bold: true, invert: true, align: 'center' });

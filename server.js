@@ -60,7 +60,7 @@ function loadDb() {
     accounts: [], transactions: [],
     hub: { hidden: [] },
     queue: { next: 1, serving: 0 },
-    qrCodes: [], scanLog: [],
+    qrCodes: [], scanLog: [], coupons: [], checks: [],
     ...(loaded || {}),
   };
   db.printer = { ...PRINTER_DEFAULTS, ...(db.printer || {}) };
@@ -239,6 +239,8 @@ async function normItem(b, prev, catIds, fallbackCat, addedBy) {
     builder,
     recipe,
     barcodes: normBarcodes(b.barcodes === undefined ? prev?.barcodes : b.barcodes),
+    // How many are left (null = not counted). Sales take from it, returns and restocking add to it.
+    stock: builder ? null : b.stock === undefined ? prev?.stock ?? null : b.stock === null || b.stock === '' ? null : clamp(Math.round(Number(b.stock)) || 0, 0, 999),
     addedBy: prev?.addedBy || addedBy,
   };
 }
@@ -348,13 +350,19 @@ function addTxn(account, amount, kind, memo, extra = {}) {
 const publicAccount = (a) => ({ ...a, cards: a.cards.map(({ pin, ...c }) => ({ ...c, hasPin: !!pin })) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function chargeCard(order, cardId, pin) {
+// Paying with a debit card anywhere (store, library): frozen, PIN and balance checks.
+async function checkCard(cardId, pin, amount) {
   const { account, card } = findCard(cardId);
   if (card.frozen) throw new HttpError(400, 'This card is frozen ❄️', { code: 'frozen' });
   if (card.pin && String(pin ?? '') !== card.pin) { await sleep(500); throw new HttpError(400, 'Wrong PIN', { code: 'pin' }); }
-  if (account.balance < order.total) {
+  if (account.balance < amount) {
     throw new HttpError(400, 'Not enough money in the bank', { code: 'funds', balance: account.balance });
   }
+  return { account, card };
+}
+
+async function chargeCard(order, cardId, pin) {
+  const { account, card } = await checkCard(cardId, pin, order.total);
   const store = db.stores.find((s) => s.id === order.storeId);
   const where = store ? `${store.emoji} ${store.name}` : 'Shop';
   addTxn(account, -order.total, 'purchase', `${where} · order #${order.number}`, { orderId: order.id, cardId: card.id });
@@ -382,6 +390,47 @@ function refundCard(order) {
   pw.refunded = true;
 }
 
+// Put things back on the shelf (cancelled sales, returns, restocking). Only items that count stock.
+function restock(store, list) {
+  if (!store) return;
+  for (const { itemId, qty } of list) {
+    const item = store.items.find((i) => i.id === itemId);
+    if (item && item.stock != null) item.stock = Math.min(999, item.stock + qty);
+  }
+}
+
+// ---------------------------------------------------------------- coupons
+// { id, storeId?, kind: amount | percent | item, value, itemId?, label, usedAt?, orderId? }
+function findCoupon(id) {
+  const c = db.coupons.find((x) => x.id === String(id || '').toLowerCase());
+  if (!c) throw new HttpError(404, 'That coupon is not real 🤔');
+  return c;
+}
+function couponLabel(c) {
+  if (c.kind === 'percent') return `${c.value}% off`;
+  if (c.kind === 'item') {
+    const item = db.stores.flatMap((s) => s.items).find((i) => i.id === c.itemId);
+    return `Free ${item ? item.name : 'item'}`;
+  }
+  return `$${(c.value / 100).toFixed(2)} off`;
+}
+function couponDiscount(c, lines, store, subtotal) {
+  if (c.usedAt) throw new HttpError(400, 'That coupon was already used', { code: 'used' });
+  if (c.storeId && c.storeId !== store.id) {
+    const s = db.stores.find((x) => x.id === c.storeId);
+    throw new HttpError(400, `That coupon is for ${s ? s.name : 'another store'}`, { code: 'store' });
+  }
+  let amount = 0;
+  if (c.kind === 'amount') amount = Math.min(c.value, subtotal);
+  else if (c.kind === 'percent') amount = Math.round((subtotal * c.value) / 100);
+  else {
+    const line = lines.find((l) => l.itemId === c.itemId);
+    if (!line) throw new HttpError(400, `${couponLabel(c)}: put one in the order first!`, { code: 'item' });
+    amount = line.price;
+  }
+  return { couponId: c.id, label: couponLabel(c), amount };
+}
+
 // Give back some lines of a paid order (the Returns desk). Card money goes back to the card;
 // cash is handed back by the kid. Tax comes back in proportion.
 function refundLines(order, wanted) {
@@ -399,9 +448,10 @@ function refundLines(order, wanted) {
   }
   if (!lines.length) throw new HttpError(400, 'Pick something to give back');
   const part = lines.reduce((a, l) => a + l.price * l.qty, 0);
-  const tax = order.subtotal ? Math.round((part * order.tax) / order.subtotal) : 0;
+  // What those lines really cost: their share of the total (so tax and any coupon count too).
   const already = order.refunds.reduce((a, r) => a + r.amount, 0);
-  const amount = Math.min(part + tax, order.total - already);
+  const amount = Math.min(order.subtotal ? Math.round((part * order.total) / order.subtotal) : 0, order.total - already);
+  restock(db.stores.find((s) => s.id === order.storeId), lines.map((l) => ({ itemId: order.lines[l.i].itemId, qty: l.qty })));
   const pw = order.paidWith || { method: 'cash' };
   const refund = { id: newId(), at: new Date().toISOString(), lines, amount, method: pw.method === 'card' ? 'card' : 'cash' };
   if (refund.method === 'card') {
@@ -446,6 +496,25 @@ function pruneOrders() {
 }
 
 // ---------------------------------------------------------------- API
+// 🎟️ Box Office and 🧾 checks live in server/boxoffice.js and server/checks.js.
+const BoxOffice = require('./server/boxoffice.js')({
+  db: () => db, HttpError, newId, clean, clamp, cents, send, readJson, persist, addTxn, accountById, checkCard, today,
+});
+const Checks = require('./server/checks.js')({
+  db: () => db, HttpError, newId, clean, cents, send, readJson, persist, addTxn, accountById,
+});
+
+// 📦 Post Office routes live in server/post.js.
+const Post = require('./server/post.js')({
+  db: () => db, HttpError, newId, clean, clamp, cents, send, readJson, requirePin, persist, addTxn, accountById, checkCard,
+});
+
+// 📚 Library routes live in server/library.js.
+const Library = require('./server/library.js')({
+  db: () => db, HttpError, newId, isId, clean, clamp, cents, send, readJson, requirePin, persist,
+  addTxn, accountById, resolvePhoto, checkCard, today,
+});
+
 // 🕵️ Spy HQ routes live in server/spy.js.
 const Spy = require('./server/spy.js')({
   db: () => db, HttpError, newId, isId, clean, clamp, cents, send, readJson, requirePin, pinOk, persist,
@@ -457,6 +526,35 @@ async function api(req, res, url) {
   const method = req.method;
   const parts = pathname.split('/').filter(Boolean); // ['api', ...]
   if (parts[1] === 'spy' && await Spy.handle(req, res, url, parts)) return;
+  if (parts[1] === 'library' && await Library.handle(req, res, url, parts)) return;
+  if (parts[1] === 'post' && await Post.handle(req, res, url, parts)) return;
+  if ((parts[1] === 'shows' || parts[1] === 'showtickets') && await BoxOffice.handle(req, res, url, parts)) return;
+  if (parts[1] === 'checks' && await Checks.handle(req, res, url, parts)) return;
+
+  // Coupons: anyone can make them (the shopkeeper prints them); each works once.
+  if (pathname === '/api/coupons' && method === 'POST') {
+    const b = await readJson(req);
+    const kind = ['amount', 'percent', 'item'].includes(b.kind) ? b.kind : 'amount';
+    const storeId = db.stores.some((s) => s.id === b.storeId) ? b.storeId : null;
+    let value = 0, itemId = null;
+    if (kind === 'amount') value = clamp(cents(b.value), 1, 100000);
+    if (kind === 'percent') value = clamp(Math.round(Number(b.value)) || 0, 1, 100);
+    if (kind === 'item') {
+      itemId = db.stores.flatMap((s) => s.items).some((i) => i.id === b.itemId) ? b.itemId : null;
+      if (!itemId) throw new HttpError(400, 'Pick the free item');
+    }
+    const count = clamp(Math.round(Number(b.count) || 1), 1, 10);
+    if (db.coupons.length + count > 200) throw new HttpError(400, 'That is a lot of coupons already');
+    const made = Array.from({ length: count }, () => ({ id: newId(), storeId, kind, value, itemId, usedAt: null, orderId: null, createdAt: new Date().toISOString() }));
+    db.coupons.push(...made);
+    persist('state');
+    return send(res, 201, made.map((c) => ({ ...c, label: couponLabel(c) })));
+  }
+  if (parts[1] === 'coupons' && parts.length === 3 && method === 'DELETE') {
+    db.coupons = db.coupons.filter((c) => c.id !== parts[2]);
+    persist('state');
+    return send(res, 200, { ok: true });
+  }
 
   if (pathname === '/api/events' && method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
@@ -469,7 +567,8 @@ async function api(req, res, url) {
   if (pathname === '/api/state' && method === 'GET') {
     return send(res, 200, {
       rev, stores: db.stores, customers: db.customers, templates: templateList(),
-      banks: db.banks, accounts: db.accounts.map(publicAccount), hub: db.hub, printer: publicPrinter(), queue: db.queue, spy: Spy.publicSpy(), qrCodes: db.qrCodes,
+      banks: db.banks, accounts: db.accounts.map(publicAccount), hub: db.hub, printer: publicPrinter(), queue: db.queue, spy: Spy.publicSpy(), qrCodes: db.qrCodes, library: Library.publicLibrary(), post: Post.publicPost(), boxOffice: BoxOffice.publicBoxOffice(),
+      coupons: db.coupons.map((c) => ({ ...c, label: couponLabel(c) })), checks: Checks.publicChecks(),
     });
   }
 
@@ -590,23 +689,35 @@ async function api(req, res, url) {
       lines.push(line);
     }
     if (!lines.length) throw new HttpError(400, 'The order is empty');
+    // Stock: is there enough of everything?
+    const want = new Map();
+    for (const l of lines) want.set(l.itemId, (want.get(l.itemId) || 0) + l.qty);
+    for (const [itemId, qty] of want) {
+      const item = store.items.find((i) => i.id === itemId);
+      if (item.stock != null && qty > item.stock) throw new HttpError(400, item.stock ? `Only ${item.stock} ${item.name} left!` : `${item.name} is sold out!`, { code: 'stock', itemId });
+    }
     const subtotal = lines.reduce((sum, l) => sum + l.price * l.qty, 0);
-    const tax = Math.round((subtotal * store.taxRate) / 100);
-    const total = subtotal + tax;
+    const coupon = b.couponId ? findCoupon(b.couponId) : null;
+    const discount = coupon ? couponDiscount(coupon, lines, store, subtotal) : null;
+    const taxable = subtotal - (discount?.amount || 0);
+    const tax = Math.round((taxable * store.taxRate) / 100);
+    const total = taxable + tax;
+    for (const [itemId, qty] of want) { const item = store.items.find((i) => i.id === itemId); if (item.stock != null) item.stock -= qty; }
     const paid = !!b.paid;
     const now = new Date().toISOString();
     const order = {
       id: newId(), number: db.nextOrderNumber++, storeId: store.id,
       customer: clean(b.customer, 30) || 'Someone', customerEmoji: clean(b.customerEmoji, 16) || '🙂',
       customerPhoto: isPhotoPath(b.customerPhoto) ? b.customerPhoto : null,
-      lines, subtotal, tax, total, paid,
+      lines, subtotal, discount, tax, total, paid,
       ...(paid ? computeChange(total, b.tendered) : { tendered: null, change: null }),
       // Stores without a kitchen (e.g. the Tech Store) hand things over at the register.
       status: store.kitchen === false ? 'delivered' : 'new', createdAt: now, updatedAt: now,
     };
     db.orders.push(order);
+    if (coupon) Object.assign(coupon, { usedAt: now, orderId: order.id });
     pruneOrders();
-    persist('orders');
+    persist(coupon || want.size ? 'state' : 'orders');
     return send(res, 201, order);
   }
 
@@ -636,6 +747,11 @@ async function api(req, res, url) {
     }
     if (b.spy) Spy.resetPlay();
     if (b.scans) db.scanLog = [];
+    if (b.library) Library.resetPlay();
+    if (b.post) Post.resetPlay();
+    if (b.boxOffice) BoxOffice.resetPlay();
+    if (b.checks) db.checks = [];
+    if (b.orders) for (const c of db.coupons) Object.assign(c, { usedAt: null, orderId: null });
     if (b.kidItems) {
       for (const s of db.stores) {
         s.items = s.items.filter((i) => i.addedBy !== 'kid');
@@ -679,8 +795,16 @@ async function api(req, res, url) {
       // Cancelling an open order refunds a card payment; removing a delivered one is just tidying up.
       const refunded = order.status !== 'delivered' && order.paidWith?.method === 'card';
       if (refunded) refundCard(order);
+      // A cancelled sale (not one that was handed over) puts the stock and the coupon back.
+      const store = db.stores.find((s) => s.id === order.storeId);
+      const cancelled = order.status !== 'delivered' || (store?.kitchen === false && !order.paid);
+      if (cancelled) {
+        restock(store, order.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })));
+        const c = order.discount && db.coupons.find((x) => x.id === order.discount.couponId);
+        if (c && c.orderId === order.id) Object.assign(c, { usedAt: null, orderId: null });
+      }
       db.orders = db.orders.filter((o) => o !== order);
-      persist(refunded ? 'state' : 'orders');
+      persist(refunded || cancelled ? 'state' : 'orders');
       return send(res, 200, { ok: true, refunded });
     }
     if (method === 'PATCH') {
@@ -754,6 +878,15 @@ async function api(req, res, url) {
   }
 
   // ---- items: anyone can add their own; items added without the PIN stay editable without it
+  if (parts[1] === 'stores' && parts[3] === 'items' && parts[5] === 'stock' && parts.length === 6 && method === 'POST') {
+    const store = findStore(parts[2]);
+    const item = store.items.find((i) => i.id === parts[4]);
+    if (!item) throw new HttpError(404, 'Item not found');
+    if (item.stock == null) throw new HttpError(400, `${item.name} isn't counted. A grown-up can turn on stock in Setup.`, { code: 'untracked' });
+    item.stock = clamp(item.stock + clamp(Math.round(Number((await readJson(req)).add) || 1), 1, 99), 0, 999);
+    persist('state');
+    return send(res, 200, { stock: item.stock });
+  }
   if (parts[1] === 'stores' && parts[3] === 'items' && (parts.length === 4 || parts.length === 5)) {
     const store = findStore(parts[2]);
     const catIds = new Set(store.categories.map((c) => c.id));

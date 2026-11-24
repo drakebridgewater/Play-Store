@@ -117,7 +117,8 @@ export function previewHtml(slip) {
   const body = Slip.layout(norm, p).map((o) => {
     if (o.lines) {
       const cls = `pl s${o.size || 1} ${o.bold ? 'b' : ''} ${o.underline ? 'u' : ''} ${o.invert ? 'inv' : ''} a-${o.align || 'left'}`;
-      return o.lines.map((l) => `<div class="${cls}">${esc(l) || '&nbsp;'}</div>`).join('');
+      // Inverted text: the printer blacks out behind the letters only, not the whole line.
+      return o.lines.map((l) => `<div class="${cls}">${o.invert && l ? `<span>${esc(l)}</span>` : esc(l) || '&nbsp;'}</div>`).join('');
     }
     if (o.t === 'qr') {
       try { return `<div class="pq-real" style="width:${pct(qrMatrix(o.data).length * o.size)}">${qrSvg(o.data, { quiet: 0, label: o.data })}</div>`; }

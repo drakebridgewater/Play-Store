@@ -6,6 +6,8 @@ import { itemModal } from './store/items.js';
 import { printer, statusLine, printModal, emojiImage, svgImage } from '../lib/print.js';
 import { priceTagSlips } from './store/slips.js';
 import { spyPanel, spyAdminActions } from './spy/admin.js';
+import { libraryPanel, libraryField, libraryAdminActions } from './library/admin.js';
+import { postPanel, postField, postAdminActions } from './post/admin.js';
 import { APPS } from './registry.js';
 
 // ------------------------------------------------------------------ setup views
@@ -35,6 +37,9 @@ export function viewSetup(r) {
         </div>`).join('') : '<p class="muted">No stores yet. Tap “New store” and pick a template.</p>'}</div>
     </section>
     ${printerPanel()}
+    ${couponPanel()}
+    ${libraryPanel()}
+    ${postPanel()}
     ${spyPanel()}
     <section class="panel">
       <h3>🏠 Home screen</h3>
@@ -128,7 +133,7 @@ export function viewStoreEditor(id) {
 export function resetModal() {
   const m = {
     step: ui.pin ? 'pick' : 'pin', pin: '',
-    o: { orders: true, bankMoney: true, accounts: false, kidItems: false, people: false, spy: false, scans: false },
+    o: { orders: true, bankMoney: true, accounts: false, kidItems: false, people: false, spy: false, scans: false, library: false, post: false, boxOffice: false, checks: false },
     render() {
       const x = '<button class="btn icon close" data-act="close" aria-label="Close">✕</button>';
       if (m.step === 'pin') {
@@ -150,6 +155,10 @@ export function resetModal() {
           ${row('accounts', '💳 Close all bank accounts', `${S.accounts.length} account${S.accounts.length === 1 ? '' : 's'} and their cards are removed.`, m.o.people)}
           ${row('kidItems', '⭐ Items added at the register', `${kid} item${kid === 1 ? '' : 's'} added with “Add my item”.`)}
           ${row('people', '🙂 People', 'Back to just Mom and Dad. This also closes the bank accounts.')}
+          ${row('boxOffice', '🎟️ Show tickets', 'All tickets are cleared, so every seat is free again. The shows stay.')}
+          ${row('checks', '🧾 Checks', 'Every check is forgotten (money already moved stays moved).')}
+          ${row('post', '📦 Mail', 'All parcels are cleared. Places and door signs stay.')}
+          ${row('library', '📚 Library loans', 'Every book goes back on the shelf and fines are cleared. The books stay.')}
           ${row('scans', '🔍 Scanner list', 'Forget everything the Scanner app remembers being scanned.')}
           ${row('spy', '🕵️ Spy HQ progress', 'Vaults lock again, missions start over and Code Breaker records are cleared. Agents, missions and vaults are kept; money already taken from a vault stays taken.')}
         </div>
@@ -205,6 +214,7 @@ export function newStoreModal() {
 export function onField(e) {
   const t = e.target;
   const d = ui.draft;
+  if (libraryField(t) || postField(t)) return;
   if (t.dataset.pf && ui.pf) {
     ui.pf[t.dataset.pf] = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Number(t.value) || 0 : t.value.trim();
     ui.pfDirty = true;
@@ -243,6 +253,9 @@ export const setupActions = {
   },
   reset() { resetModal(); },
   ...spyAdminActions,
+  ...libraryAdminActions,
+  ...postAdminActions,
+  async 'coupon-del'(el) { await api('DELETE', `/api/coupons/${el.dataset.id}`); await loadAll(); render(); },
   tags() {
     if (ui.dirty) { toast('Save the store first 💾, then print its price tags'); return; }
     const s = storeById(ui.draft.id);
@@ -408,4 +421,18 @@ function tagsModal(store) {
     },
   };
   openModal(m);
+}
+
+// 🎟️ Coupons: made at the register (🎟️ Coupons button); listed here to tidy up.
+function couponPanel() {
+  const list = S.coupons || [];
+  if (!list.length) return '';
+  const open = list.filter((c) => !c.usedAt);
+  const storeName = (id) => S.stores.find((s) => s.id === id)?.name || 'any store';
+  return `<section class="panel">
+    <h3>🎟️ Coupons</h3>
+    <p class="muted">${open.length} not used yet, ${list.length - open.length} used. Make more with the 🎟️ Coupons button at the register.</p>
+    <div class="list">${list.slice(-30).reverse().map((c) => `<div class="list-row"><span class="e">🎟️</span><span class="grow">${esc(c.label)}<small>${esc(storeName(c.storeId))} · ${c.usedAt ? 'used' : 'not used yet'}</small></span>
+      <button class="btn icon danger" data-act="coupon-del" data-id="${c.id}" aria-label="Remove">✕</button></div>`).join('')}</div>
+  </section>`;
 }

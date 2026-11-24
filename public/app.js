@@ -8,10 +8,13 @@ import { peopleApp } from './apps/people.js';
 import { setupApp } from './apps/setup.js';
 import { spyApp } from './apps/spy/index.js';
 import { toolsApp } from './apps/tools/index.js';
+import { libraryApp } from './apps/library/index.js';
+import { postApp } from './apps/post/index.js';
+import { ticketsApp } from './apps/tickets/index.js';
 import { setScanHandler, scanChip } from './lib/scan.js';
 import { printer, statusLine } from './lib/print.js';
 
-const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, spy: spyApp, tools: toolsApp, setup: setupApp };
+const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, library: libraryApp, post: postApp, tickets: ticketsApp, spy: spyApp, tools: toolsApp, setup: setupApp };
 
 // Every route name ("cashier", "bank", …) maps to the app that draws it; every data-act to its handler.
 const VIEWS = {};

@@ -69,6 +69,19 @@ export async function priceTagSlips(store, items, perSlip = 4) {
   return slips;
 }
 
+// Coupons: what it's worth, where it works, and a QR code to scan at the register. One use each.
+export function couponSlips(coupons, store) {
+  return coupons.map((c) => ({ title: `Coupon ${c.label}`, parts: [
+    { t: 'text', s: 'COUPON', size: 2, bold: true, invert: true, align: 'center' },
+    { t: 'text', s: c.label.toUpperCase(), size: 3, bold: true, align: 'center' },
+    { t: 'text', s: store ? `at ${store.name}` : 'at any Kids Hub store', align: 'center' },
+    { t: 'rule', ch: '.' },
+    { t: 'qr', data: `KH-U-${c.id.toUpperCase()}`, size: 6 },
+    { t: 'text', s: 'Scan at the register. Good for one use.', align: 'center' },
+    { t: 'feed', n: 1 }, { t: 'cut' },
+  ] }));
+}
+
 // What came back at the Returns desk.
 export function returnSlip(order, refund) {
   const s = storeOf(order.storeId);

@@ -6,6 +6,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 COPY package.json server.js templates.js ./
+COPY server ./server
 COPY public ./public
 
 # Unraid's nobody:users; compose may override with `user:`.

@@ -1,7 +1,7 @@
 {
-  "name": "Play Store",
-  "short_name": "Play Store",
-  "description": "A pretend-play cash register and kitchen order queue",
+  "name": "Kids Hub",
+  "short_name": "Kids Hub",
+  "description": "Pretend-play apps for kids: store, kitchen orders, bank and more",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -8,6 +8,9 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { makeStore, templateList, hasTemplate } = require('./templates');
 const Art = require('./public/art.js');
+const Slip = require('./public/slip.js');
+const Printer = require('./server/printer.js');
+const Codes = require('./server/codes.js');
 
 const PORT = Number(process.env.PORT) || 8080;
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -55,8 +58,12 @@ function loadDb() {
     customers: defaultPeople(),
     banks: [{ id: newId(), name: 'Play Bank', emoji: '🏦', color: '#0f766e' }],
     accounts: [], transactions: [],
+    hub: { hidden: [] },
+    queue: { next: 1, serving: 0 },
     ...(loaded || {}),
   };
+  db.printer = { ...PRINTER_DEFAULTS, ...(db.printer || {}) };
+  if (!PAPER[db.printer.paper]) db.printer.paper = OLD_PAPER[db.printer.paper] || PRINTER_DEFAULTS.paper;
   // Stores made before the kitchen setting: electronics-look (tech) stores just check out.
   let migrated = false;
   for (const s of db.stores) if (s.kitchen === undefined) { s.kitchen = s.theme !== 'electronics'; migrated = true; }
@@ -77,6 +84,74 @@ function persist(what) {
     })
     .catch((e) => console.error('saving db.json failed:', e));
   broadcast(what);
+}
+
+// ---------------------------------------------------------------- receipt printer
+// Settings live in db.json (Setup → Printer). PRINTER_HOST / PRINTER_PORT give the address
+// when Setup leaves it empty. The printer's state is only kept in memory.
+const PRINTER_DEFAULTS = {
+  enabled: true, host: '', port: 9100, paper: 48, dailyLimit: 40, maxCm: 40,
+  autoReceipt: false, autoTicket: false, funLines: true, cut: true, usage: { day: '', count: 0 },
+};
+// Paper choices, by letters a line in the normal font. Epson TM-T88 printers print 42 letters
+// (512 dots at 180 dpi) on 80 mm paper; most other 80 mm printers print 48 (576 dots at 203 dpi).
+const PAPER = {
+  48: { label: '80 mm · 48 letters', dots: 576, cols: 48, dpmm: 8 },
+  42: { label: '80 mm · 42 letters (Epson TM-T88)', dots: 512, cols: 42, dpmm: 7.1 },
+  32: { label: '58 mm · 32 letters', dots: 384, cols: 32, dpmm: 8 },
+};
+const OLD_PAPER = { 80: 48, 58: 32 }; // settings saved before the 42-letter choice
+let printerStatus = { state: 'unknown', message: '' };
+const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in the container's TZ
+function printerAddress() {
+  const p = db.printer;
+  return { host: p.host || process.env.PRINTER_HOST || '', port: p.host ? p.port : Number(process.env.PRINTER_PORT) || p.port };
+}
+function printsToday() { return db.printer.usage.day === today() ? db.printer.usage.count : 0; }
+function publicPrinter() {
+  const { usage, ...settings } = db.printer;
+  const addr = printerAddress();
+  return { ...settings, ...PAPER[settings.paper], papers: Object.entries(PAPER).map(([id, x]) => ({ id: Number(id), label: x.label })), address: addr.host ? `${addr.host}:${addr.port}` : '', envHost: process.env.PRINTER_HOST || '', today: printsToday(), status: printerStatus };
+}
+function setPrinterStatus(state, message = '') {
+  if (printerStatus.state === state && printerStatus.message === message) return;
+  printerStatus = { state, message };
+  broadcast('printer');
+}
+function statusFrom(st) {
+  if (st.cover === 'open') return ['open', 'The lid is open'];
+  if (st.paper === 'out') return ['out', 'Out of paper'];
+  if (st.paper === 'low') return ['low', 'Paper is running low'];
+  return ['ready', ''];
+}
+async function checkPrinter() {
+  const { host, port } = printerAddress();
+  if (!db.printer.enabled) return setPrinterStatus('off');
+  if (!host) return setPrinterStatus('unset');
+  try { setPrinterStatus(...statusFrom(await Printer.queue(() => Printer.talk(host, port, null)))); }
+  catch (e) { setPrinterStatus('offline', e.message); }
+}
+setInterval(checkPrinter, 30_000).unref();
+
+async function printSlip(raw, { test = false } = {}) {
+  const p = db.printer;
+  const { host, port } = printerAddress();
+  if (!p.enabled) throw new HttpError(409, 'The printer is turned off');
+  if (!host) throw new HttpError(409, 'No printer is set up yet');
+  if (!test && printsToday() >= p.dailyLimit) throw new HttpError(429, 'The printer is resting until tomorrow 😴', { code: 'limit' });
+  const paper = PAPER[p.paper];
+  let slip;
+  try { slip = Slip.normalize(raw, paper); } catch (e) { throw new HttpError(400, e.message); }
+  if (Slip.heightDots(Slip.layout(slip, paper)) > p.maxCm * 10 * paper.dpmm) throw new HttpError(400, 'That is too long for the printer', { code: 'length' });
+  const job = Printer.escpos(slip, { ...paper, cut: p.cut });
+  try {
+    setPrinterStatus(...statusFrom(await Printer.queue(() => Printer.talk(host, port, job))));
+  } catch (e) {
+    setPrinterStatus(/paper/.test(e.message) ? 'out' : /lid/.test(e.message) ? 'open' : 'offline', e.message);
+    throw new HttpError(503, e.message, { code: 'printer' });
+  }
+  if (!test) { p.usage = { day: today(), count: printsToday() + 1 }; persist('printer'); }
+  return { ok: true, left: Math.max(0, p.dailyLimit - p.usage.count) };
 }
 
 // ---------------------------------------------------------------- live updates (SSE)
@@ -161,8 +236,19 @@ async function normItem(b, prev, catIds, fallbackCat, addedBy) {
     wasPrice: !builder && was > price ? was : null,
     builder,
     recipe,
+    barcodes: normBarcodes(b.barcodes === undefined ? prev?.barcodes : b.barcodes),
     addedBy: prev?.addedBy || addedBy,
   };
+}
+
+// Barcodes linked to an item (real product codes scanned at the register). Up to 10 per item.
+function normBarcodes(list) {
+  const out = [];
+  for (const v of Array.isArray(list) ? list : []) {
+    const code = String(v ?? '').trim();
+    if (/^[\x21-\x7e]{3,40}$/.test(code) && !out.includes(code)) out.push(code);
+  }
+  return out.slice(0, 10);
 }
 
 async function normStore(b, old) {
@@ -294,6 +380,62 @@ function refundCard(order) {
   pw.refunded = true;
 }
 
+// Give back some lines of a paid order (the Returns desk). Card money goes back to the card;
+// cash is handed back by the kid. Tax comes back in proportion.
+function refundLines(order, wanted) {
+  if (!order.paid) throw new HttpError(400, 'This order was never paid, so there is nothing to give back');
+  order.refunds ||= [];
+  const back = (i) => order.refunds.reduce((n, r) => n + r.lines.filter((l) => l.i === i).reduce((a, l) => a + l.qty, 0), 0);
+  const lines = [];
+  for (const w of Array.isArray(wanted) ? wanted : []) {
+    const i = Math.round(Number(w.i));
+    const line = order.lines[i];
+    const qty = clamp(Math.round(Number(w.qty) || 0), 0, 99);
+    if (!line || !qty) continue;
+    if (qty > line.qty - back(i)) throw new HttpError(400, `Only ${line.qty - back(i)} ${line.name} can come back`);
+    lines.push({ i, qty, name: line.name, price: line.price });
+  }
+  if (!lines.length) throw new HttpError(400, 'Pick something to give back');
+  const part = lines.reduce((a, l) => a + l.price * l.qty, 0);
+  const tax = order.subtotal ? Math.round((part * order.tax) / order.subtotal) : 0;
+  const already = order.refunds.reduce((a, r) => a + r.amount, 0);
+  const amount = Math.min(part + tax, order.total - already);
+  const pw = order.paidWith || { method: 'cash' };
+  const refund = { id: newId(), at: new Date().toISOString(), lines, amount, method: pw.method === 'card' ? 'card' : 'cash' };
+  if (refund.method === 'card') {
+    const acct = accountById(pw.accountId);
+    if (acct) addTxn(acct, amount, 'refund', `↩️ Return · order #${order.number}`, { orderId: order.id });
+    const payout = accountById(pw.payoutAccountId);
+    const take = payout ? Math.min(payout.balance, amount) : 0;
+    if (take) addTxn(payout, -take, 'refund', `↩️ Return for ${order.customer} · order #${order.number}`, { orderId: order.id });
+    refund.last4 = pw.last4;
+    refund.balanceLeft = acct ? acct.balance : null;
+    refund.owner = acct ? acct.owner.name : null;
+  }
+  order.refunds.push(refund);
+  order.updatedAt = refund.at;
+  return refund;
+}
+
+// Today's numbers for the shopkeeper's end-of-day report (all stores, or one).
+function dayReport(storeId) {
+  const day = today();
+  const orders = db.orders.filter((o) => new Date(o.createdAt).toLocaleDateString('en-CA') === day && (!storeId || o.storeId === storeId));
+  const r = { day, orders: orders.length, paid: 0, sales: 0, tax: 0, cash: 0, card: 0, unpaid: 0, unpaidAmount: 0, refunds: 0, cashRefunds: 0, refundCount: 0, items: 0, best: [] };
+  const counts = new Map();
+  for (const o of orders) {
+    for (const l of o.lines) { r.items += l.qty; counts.set(l.name, (counts.get(l.name) || 0) + l.qty); }
+    if (!o.paid) { r.unpaid++; r.unpaidAmount += o.total; continue; }
+    r.paid++; r.sales += o.total; r.tax += o.tax;
+    if (o.paidWith?.method === 'card') r.card += o.total; else r.cash += o.total;
+    for (const f of o.refunds || []) { r.refunds += f.amount; r.refundCount++; if (f.method === 'cash') r.cashRefunds += f.amount; }
+  }
+  r.best = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, qty]) => ({ name, qty }));
+  r.firstNumber = orders.length ? Math.min(...orders.map((o) => o.number)) : null;
+  r.lastNumber = orders.length ? Math.max(...orders.map((o) => o.number)) : null;
+  return r;
+}
+
 function pruneOrders() {
   if (db.orders.length <= MAX_ORDERS) return;
   const extra = db.orders.length - MAX_ORDERS;
@@ -318,8 +460,55 @@ async function api(req, res, url) {
   if (pathname === '/api/state' && method === 'GET') {
     return send(res, 200, {
       rev, stores: db.stores, customers: db.customers, templates: templateList(),
-      banks: db.banks, accounts: db.accounts.map(publicAccount),
+      banks: db.banks, accounts: db.accounts.map(publicAccount), hub: db.hub, printer: publicPrinter(), queue: db.queue,
     });
+  }
+
+  // Home screen: which app tiles are hidden (grown-ups).
+  if (pathname === '/api/hub' && method === 'PUT') {
+    requirePin(req);
+    const b = await readJson(req);
+    const hidden = Array.isArray(b.hidden) ? b.hidden.filter((id) => typeof id === 'string' && /^[a-z]{1,20}$/.test(id)) : [];
+    db.hub = { ...db.hub, hidden: [...new Set(hidden)].slice(0, 30) };
+    persist('hub');
+    return send(res, 200, db.hub);
+  }
+
+  // What is this code? (scanner) GET /api/codes?c=KH-R-ABC123
+  if (pathname === '/api/codes' && method === 'GET') {
+    return send(res, 200, Codes.lookup(db, url.searchParams.get('c')));
+  }
+  // Printing needs no PIN (kids print receipts); a test print does, and skips the daily limit.
+  if (pathname === '/api/print' && method === 'POST') {
+    const b = await readJson(req);
+    if (b.test) requirePin(req);
+    return send(res, 200, await printSlip(b.slip, { test: !!b.test }));
+  }
+  if (pathname === '/api/printer/check' && method === 'POST') {
+    await checkPrinter();
+    return send(res, 200, publicPrinter());
+  }
+  if (pathname === '/api/printer' && method === 'PUT') {
+    requirePin(req);
+    const b = await readJson(req);
+    const p = db.printer;
+    const host = clean(b.host ?? p.host, 253);
+    if (host && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(host)) throw new HttpError(400, 'The printer address should look like 192.168.1.50');
+    Object.assign(p, {
+      enabled: b.enabled === undefined ? p.enabled : !!b.enabled,
+      host,
+      port: clamp(Math.round(Number(b.port ?? p.port)) || 9100, 1, 65535),
+      paper: PAPER[Number(b.paper)] ? Number(b.paper) : p.paper,
+      dailyLimit: clamp(Math.round(Number(b.dailyLimit ?? p.dailyLimit)) || 1, 1, 500),
+      maxCm: clamp(Math.round(Number(b.maxCm ?? p.maxCm)) || 40, 10, 200),
+      autoReceipt: b.autoReceipt === undefined ? p.autoReceipt : !!b.autoReceipt,
+      autoTicket: b.autoTicket === undefined ? p.autoTicket : !!b.autoTicket,
+      funLines: b.funLines === undefined ? p.funLines : !!b.funLines,
+      cut: b.cut === undefined ? p.cut : !!b.cut,
+    });
+    persist('printer');
+    await checkPrinter();
+    return send(res, 200, publicPrinter());
   }
 
   if (pathname === '/api/pin' && method === 'POST') {
@@ -392,7 +581,7 @@ async function api(req, res, url) {
   if (pathname === '/api/reset' && method === 'POST') {
     requirePin(req);
     const b = await readJson(req);
-    if (b.orders) { db.orders = []; db.nextOrderNumber = 1; }
+    if (b.orders) { db.orders = []; db.nextOrderNumber = 1; db.queue = { next: 1, serving: 0 }; }
     if (b.people) { db.customers = defaultPeople(); b.accounts = true; } // accounts belong to people
     if (b.accounts) {
       db.accounts = []; db.transactions = [];
@@ -411,9 +600,35 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true });
   }
 
+  if (parts[1] === 'orders' && parts[3] === 'refund' && parts.length === 4 && method === 'POST') {
+    const order = db.orders.find((o) => o.id === parts[2]);
+    if (!order) throw new HttpError(404, 'That order is gone');
+    const refund = refundLines(order, (await readJson(req)).lines);
+    persist('state');
+    return send(res, 200, { order, refund });
+  }
+
+  if (pathname === '/api/report' && method === 'GET') {
+    return send(res, 200, dayReport(url.searchParams.get('storeId') || null));
+  }
+
+  // Take a number (deli counter): one queue for the whole Store app. No PIN.
+  if (pathname === '/api/queue' && method === 'POST') {
+    const b = await readJson(req);
+    const q = db.queue;
+    let number = null;
+    if (b.action === 'take') { number = q.next; q.next += 1; }
+    else if (b.action === 'next') { if (q.serving < q.next - 1) q.serving += 1; }
+    else if (b.action === 'reset') { q.next = 1; q.serving = 0; }
+    else throw new HttpError(400, 'Unknown action');
+    persist('queue');
+    return send(res, 200, { ...q, number });
+  }
+
   if (parts[1] === 'orders' && parts.length === 3) {
     const order = db.orders.find((o) => o.id === parts[2]);
     if (!order) throw new HttpError(404, 'Order not found');
+    if (method === 'GET') return send(res, 200, order);
     if (method === 'DELETE') {
       // Cancelling an open order refunds a card payment; removing a delivered one is just tidying up.
       const refunded = order.status !== 'delivered' && order.paidWith?.method === 'card';
@@ -718,7 +933,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadDb();
-server.listen(PORT, () => console.log(`Play Store listening on :${PORT}, data in ${DATA_DIR}`));
+server.listen(PORT, () => console.log(`Kids Hub listening on :${PORT}, data in ${DATA_DIR}`));
+checkPrinter();
 
 async function shutdown() {
   server.close();

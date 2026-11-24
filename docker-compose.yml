@@ -12,6 +12,9 @@ services:
     environment:
       TZ: America/Los_Angeles
       SETUP_PIN: ${SETUP_PIN:-1234}     # grown-up PIN for Setup
+      # Receipt printer (network ESC/POS). Optional: the address can also be typed in Setup → Receipt printer.
+      # PRINTER_HOST: 192.168.1.50
+      # PRINTER_PORT: "9100"
     volumes:
       - /mnt/user/appdata/playstore:/data   # db.json + photos/
     # No Traefik? Use this instead and open http://<server-ip>:8089

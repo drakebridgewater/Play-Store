@@ -92,7 +92,7 @@ export async function scanned(code) {
   scanState.last = code; scanState.at = Date.now();
   document.getElementById('scan-chip')?.replaceWith(chipEl());
   let info;
-  try { info = await api('GET', `/api/codes?c=${encodeURIComponent(code)}`); }
+  try { info = await api('GET', `/api/codes?c=${encodeURIComponent(code)}&log=1`); }
   catch (e) { toast(e.message); return; }
   if (handler && (await handler(info))) return;
   showScanCard(info);

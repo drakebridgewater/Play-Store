@@ -5,6 +5,14 @@
 
 const money = (c) => `$${(c / 100).toFixed(2)}`;
 
+// Shortcut codes (KH-G-<name>) and where they go.
+const GO = {
+  store: ['#/store', '🏪', 'the Store'], bank: ['#/bank', '🏦', 'the Bank'], people: ['#/people', '🙂', 'People'],
+  spy: ['#/spy', '🕵️', 'Spy HQ'], cipher: ['#/spy/cipher', '🌀', 'the Cipher Lab'], codebreaker: ['#/spy/codebreaker', '🔢', 'Code Breaker'],
+  missions: ['#/spy/missions', '🗺️', 'Missions'], vault: ['#/spy/vault', '🔐', 'the Vaults'], serving: ['#/serving', '📣', 'Now Serving'],
+  scanner: ['#/scanner', '🔍', 'the Scanner'], qr: ['#/qr', '🔳', 'QR Studio'], calc: ['#/calc', '🧮', 'the Adding Machine'], home: ['#/', '🏠', 'the home screen'],
+};
+
 // Real product barcodes: EAN-13, UPC-A, EAN-8 (and ISBN, which is EAN-13 starting 978/979).
 function productInfo(digits) {
   const format = digits.length === 13 ? (/^97[89]/.test(digits) ? 'ISBN' : 'EAN-13') : digits.length === 12 ? 'UPC-A' : 'EAN-8';
@@ -68,8 +76,26 @@ function lookup(db, raw) {
         if (item) return { ...base, kind: 'item', id, app: 'store', emoji: item.emoji, photo: item.photo || null, icon: item.icon || null, label: item.name, detail: `${money(item.price)} at ${s.emoji} ${s.name}`, href: `#/cashier/${s.id}`, go: s.name, item: { id: item.id, storeId: s.id, price: item.price } };
       }
     }
+    if (letter === 'G' && GO[id]) {
+      // "Open an app" codes made in QR Studio: KH-G-SPY opens Spy HQ.
+      return { ...base, kind: 'go', id, emoji: GO[id][1], label: `Open ${GO[id][2]}`, detail: 'A shortcut code from QR Studio', href: GO[id][0], go: GO[id][2] };
+    }
+    const spy = db.spy || { agents: [], missions: [] };
+    if (letter === 'A') {
+      const a = spy.agents.find((x) => x.id === id);
+      if (a) return { ...base, kind: 'agent', id, app: 'spy', emoji: a.emoji || '🕵️', photo: a.photo || null, label: `Agent ${a.codename}`, detail: `Spy HQ badge · agent number ${a.number}`, href: '#/spy', go: 'Spy HQ' };
+    }
+    if (letter === 'X') {
+      for (const m of spy.missions) {
+        const i = m.clues.findIndex((c) => c.id === id);
+        if (i >= 0) return { ...base, kind: 'clue', id, app: 'spy', emoji: '🗝️', label: 'A secret clue card!', detail: `Part of the mission "${m.name}". Open Spy HQ to read it.`, href: `#/spy/missions/${m.id}`, go: 'Spy HQ', clue: { missionId: m.id, clueId: id } };
+      }
+    }
     return { ...base, kind: 'gone', emoji: '👻', label: 'A Kids Hub code', detail: 'Whatever it belonged to is gone now.' };
   }
+  // Secret messages printed in Spy HQ's Cipher Lab: SPY:<CIPHER>:<message>
+  const secret = /^SPY:([A-Z]+):(.+)$/i.exec(code);
+  if (secret) return { code, ours: true, kind: 'secret', app: 'spy', emoji: '✉️', label: 'A secret message!', detail: 'Decode it in Spy HQ\'s Cipher Lab.', href: '#/spy/cipher', go: 'Cipher Lab', secret: { cipher: secret[1].toLowerCase(), text: secret[2] } };
   if (/^KH-TEST/i.test(code)) return { code, ours: true, kind: 'test', emoji: '🎉', label: 'The printer test code', detail: 'The scanner works!' };
 
   if (/^\d{8}$|^\d{12,13}$/.test(code)) {
@@ -86,4 +112,4 @@ function lookup(db, raw) {
   return { code, kind: 'text', emoji: '💬', label: 'Some writing', detail: code.length > 120 ? `${code.slice(0, 120)}…` : code };
 }
 
-module.exports = { lookup, productInfo };
+module.exports = { lookup, productInfo, GO };

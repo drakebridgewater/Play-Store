@@ -6,10 +6,12 @@ import { storeApp } from './apps/store/index.js';
 import { bankApp } from './apps/bank.js';
 import { peopleApp } from './apps/people.js';
 import { setupApp } from './apps/setup.js';
+import { spyApp } from './apps/spy/index.js';
+import { toolsApp } from './apps/tools/index.js';
 import { setScanHandler, scanChip } from './lib/scan.js';
 import { printer, statusLine } from './lib/print.js';
 
-const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, setup: setupApp };
+const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, spy: spyApp, tools: toolsApp, setup: setupApp };
 
 // Every route name ("cashier", "bank", …) maps to the app that draws it; every data-act to its handler.
 const VIEWS = {};
@@ -68,7 +70,14 @@ setRenderer(render);
 // A scan goes to the app on screen first (its onScan returns true when it dealt with it);
 // otherwise the "What is this?" card shows up.
 // An open window (modal) that wants scans gets them before the screen behind it.
-setScanHandler(async (info) => (await ui.modal?.onScan?.(info)) || (await OWNER[route().view]?.onScan?.(info, route())) || false);
+// Some codes mean the same thing on any screen (a spy badge, a clue card): apps claim those in anyScan.
+setScanHandler(async (info) => {
+  if (await ui.modal?.onScan?.(info)) return true;
+  const r = route();
+  const owner = OWNER[r.view];
+  if (!owner?.ownsScans?.(r)) for (const mod of Object.values(MODULES)) if (await mod.anyScan?.(info)) return true;
+  return (await owner?.onScan?.(info, r)) || false;
+});
 
 // ------------------------------------------------------------------ events
 $app.addEventListener('click', (e) => {
@@ -80,6 +89,7 @@ $app.addEventListener('click', (e) => {
   Promise.resolve(fn(el, e)).catch((err) => toast(err.message));
 });
 $app.addEventListener('input', setupApp.onField);
+$app.addEventListener('input', (e) => OWNER[route().view]?.onInput?.(e, route()));
 $app.addEventListener('change', setupApp.onField);
 
 window.addEventListener('hashchange', () => { if (ui.modal) closeModal(); window.scrollTo(0, 0); render(); });

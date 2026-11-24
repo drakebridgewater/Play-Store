@@ -154,6 +154,8 @@ export async function loadAll() {
   S.hub = st.hub || { hidden: [] };
   S.printer = st.printer || null;
   S.queue = st.queue || { next: 1, serving: 0 };
+  S.spy = st.spy || null;
+  S.qrCodes = st.qrCodes || [];
   S.loaded = true;
 }
 

@@ -5,6 +5,7 @@ import { hasKitchen, storeById } from './store/common.js';
 import { itemModal } from './store/items.js';
 import { printer, statusLine, printModal, emojiImage, svgImage } from '../lib/print.js';
 import { priceTagSlips } from './store/slips.js';
+import { spyPanel, spyAdminActions } from './spy/admin.js';
 import { APPS } from './registry.js';
 
 // ------------------------------------------------------------------ setup views
@@ -34,6 +35,7 @@ export function viewSetup(r) {
         </div>`).join('') : '<p class="muted">No stores yet. Tap “New store” and pick a template.</p>'}</div>
     </section>
     ${printerPanel()}
+    ${spyPanel()}
     <section class="panel">
       <h3>🏠 Home screen</h3>
       <p class="muted">Tap an app to show or hide it on the home screen. Hidden apps still work if you go to them another way.</p>
@@ -126,7 +128,7 @@ export function viewStoreEditor(id) {
 export function resetModal() {
   const m = {
     step: ui.pin ? 'pick' : 'pin', pin: '',
-    o: { orders: true, bankMoney: true, accounts: false, kidItems: false, people: false },
+    o: { orders: true, bankMoney: true, accounts: false, kidItems: false, people: false, spy: false, scans: false },
     render() {
       const x = '<button class="btn icon close" data-act="close" aria-label="Close">✕</button>';
       if (m.step === 'pin') {
@@ -148,6 +150,8 @@ export function resetModal() {
           ${row('accounts', '💳 Close all bank accounts', `${S.accounts.length} account${S.accounts.length === 1 ? '' : 's'} and their cards are removed.`, m.o.people)}
           ${row('kidItems', '⭐ Items added at the register', `${kid} item${kid === 1 ? '' : 's'} added with “Add my item”.`)}
           ${row('people', '🙂 People', 'Back to just Mom and Dad. This also closes the bank accounts.')}
+          ${row('scans', '🔍 Scanner list', 'Forget everything the Scanner app remembers being scanned.')}
+          ${row('spy', '🕵️ Spy HQ progress', 'Vaults lock again, missions start over and Code Breaker records are cleared. Agents, missions and vaults are kept; money already taken from a vault stays taken.')}
         </div>
         <button class="btn huge bad" data-act="go-reset" ${any ? '' : 'disabled'}>🔄 Reset</button>
       </div>`;
@@ -238,6 +242,7 @@ export const setupActions = {
     await loadAll(); render(); toast('Cleared 🧹');
   },
   reset() { resetModal(); },
+  ...spyAdminActions,
   tags() {
     if (ui.dirty) { toast('Save the store first 💾, then print its price tags'); return; }
     const s = storeById(ui.draft.id);

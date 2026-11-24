@@ -2,7 +2,7 @@
 
 The Play Store becomes one app in a **Kids Hub**: a tablet-style home screen of pretend-play apps that share people, play money, a Bluetooth scanner and a network receipt printer.
 
-Status: **phases 1–4 are built** (hub and code split, printer, scanner and codes, store with scan and print). Everything else is still design. Build order is at the bottom.
+Status: **phases 1–6 are built** (hub and code split, printer, scanner and codes, store with scan and print, Spy HQ, Scanner / QR Studio / Adding Machine). Everything else is still design. Build order is at the bottom.
 
 **Hardware it's designed for**
 - **Scanner:** Bluetooth, 2D (reads QR codes and barcodes). Paired to the tablet, it acts as a keyboard: it types the code, then presses Enter.
@@ -199,14 +199,15 @@ A "what is this?" machine.
 - **Scan log:** everything scanned today, with counts ("You scanned 37 things!").
 - **Prints:** a "scan report" slip for one code.
 
-**Data:** `scanLog[]` (the last 200 scans).
+**Data:** `scanLog[]` (the last 200 scans, saved without making every tablet reload). On the Scanner and QR Studio screens, scans are shown in place and aren't picked up by other apps (no jumping to Spy HQ when a clue card is scanned there).
 
 ### 4.7 🔳 QR Studio
 - **Make:** a message, an emoji picture name, a secret message (encoded with a Spy HQ cipher first), a "link" for the hub (for example *open Spy HQ*), or a Wi-Fi card for guests (grown-up only).
 - **Show it** full screen to scan with the scanner, or **print** it with a big caption.
 - **Read:** scan any QR code to see its text, and decode secret ones with the key.
 - **Saved codes:** a gallery of what he made, each with its own `KH-Q` ID.
-- Showing QR codes on screen needs an encoder in the browser. I'll write a small one (`public/lib/qr.js`, about 350 lines, byte mode, versions 1–10, error correction level M) to keep zero dependencies. Printing uses the printer's own QR.
+- Showing QR codes on screen needs an encoder in the browser: `public/lib/qr.js` (built; byte mode, versions 1–10, error correction level M, about 200 lines). Printing uses the printer's own QR. Print previews use it too, and `public/lib/code128.js` for barcodes.
+- Saved codes hold the text itself (so phone cameras can read message codes), not a `KH-Q` id. Shortcut codes are `KH-G-<app>`.
 
 **Data:** `qrCodes[] {id, kind, text, cipher?, caption, emoji, createdBy}`.
 
@@ -234,15 +235,15 @@ A "what is this?" machine.
 - **Print a decoder key card** for each cipher.
 
 **Vault**
-- A big keypad safe with clicks, a dial and a door that swings open. A grown-up or the kid sets the combination and what's inside: a message, a picture, or a **Bank reward** (needs the grown-up PIN when it's set up; paid into the opener's account, once).
-- Wrong guesses can give "warmer / colder" hints (optional).
+- A big keypad safe with clicks, a dial and a door that swings open. A grown-up or the kid sets the combination and what's inside: a message, or a **Bank reward** (grown-up PIN; the opener picks a bank account and it's paid once). Pictures as prizes aren't built.
+- Wrong guesses can give hints: how many numbers are in the right spot (optional). Codes are checked on the server, which waits a moment after each wrong try.
 
 **Missions** (scavenger hunt)
 - A grown-up builds a mission in Setup → Spy HQ: a name, then up to 12 clues. Each clue has a riddle or hint, an optional cipher (the clue shows up encoded, and the kid decodes it in Cipher Lab), and an optional hiding-spot note for the grown-up.
-- **Print clue cards** (numbered on the back only by a tiny dot pattern, so the order isn't obvious). The grown-up hides them.
+- **Print clue cards.** Each says START HERE or SECRET CLUE, with a QR code and, in small print for the grown-up, its card number and hiding spot. The clue text itself is never printed: the kid has to scan the card to read it. The grown-up hides them.
 - The kid scans clue 1 → it shows the clue → he finds card 2 → and so on. Scanning out of order says "That's not your next clue, agent."
 - The last card reveals the **vault code**, and the Vault holds the reward.
-- **Quick mission:** pick 3–6 places from the house places list (the same ones as the Post Office), and Spy HQ writes simple rhyming clues for them from built-in templates.
+- **Quick mission:** pick 3–8 places from a built-in list of 16 house places (each with a rhyming riddle) plus any custom places, and Spy HQ writes the clues; every other one can be in cipher-wheel code. The Post Office can share the places list later.
 - **Mission log** prints at the end: agent, time taken, clues found.
 
 **Data:** `agents[] {id, customerId?, codename, photo?}`, `cbRecords[]`, `vaults[] {id, name, comboHash, prize {kind, text?, amount?, accountMode}, openedAt?, openedBy?}`, `missions[] {id, name, clues[] {id, text, cipher?, shift?, spot?}, vaultId?, runs[] {agentId, startedAt, found[], doneAt?}}`.
@@ -270,7 +271,8 @@ server.js              storage, SSE, PIN, and (for now) every route; split out b
 server/printer.js      ESC/POS writer, queue, status (built)
 public/slip.js         slip format: cleaning, wrap, layout, size check; shared by browser and server (built)
 server/codes.js        /api/codes lookup across all apps (built)
-server/apps/*.js       library, post, tickets, spy  (each exports its routes)
+server/spy.js          Spy HQ routes (built)
+server/apps/*.js       library, post, tickets  (each exports its routes)
 public/index.html      loads app.js as type="module"
 public/app.js          router and hub (built)
 public/apps/registry.js  hub tiles: id, name, emoji, color, link (built)
@@ -279,13 +281,15 @@ public/lib/cash.js     bills, coins, cash tray, PIN pad (built)
 public/lib/photo.js    take or pick a photo (built)
 public/lib/scan.js     scanner listener, dispatch, What is this? card (built)
 public/lib/print.js    paper preview, dithering, print modal, POST /api/print (built)
-public/lib/qr.js       QR encoder for on-screen codes
-public/lib/code128.js  Code 128 for on-screen barcodes
+public/lib/qr.js       QR encoder for on-screen codes (built)
+public/lib/code128.js  Code 128 for on-screen barcodes (built)
 public/lib/sound.js    beeps and cheers (Web Audio)
 public/lib/fun.js      jokes and facts for receipts (built)
-public/lib/gs1.js      barcode country prefixes, check digits
+public/lib/gs1.js      barcode country prefixes, check digits (built)
 public/apps/store/     index (lobby), cashier, orders, pay, items, common (built)
-public/apps/*.js       bank, people, setup (built); library, post, tickets, scanner, qr, calc, spy
+public/apps/spy/       index (HQ, agents), codebreaker, cipher, ciphers, vault, missions, admin (Setup), slips (built)
+public/apps/tools/     scanner, qrstudio, calc (built)
+public/apps/*.js       bank, people, setup (built); library, post, tickets
 public/art.js          (existing) plus new drawings: books, parcels, stamps, safe, tickets
 ```
 - `db.json` goes to `version: 2`. New lists start empty, existing data is untouched, and IDs keep their format.
@@ -302,8 +306,8 @@ Each phase ends usable on the tablet.
 | 2 ✅ | **Printer.** `printer.js`, slip format, paper preview, Setup → Printer with budget and test print, store receipts. | Test print and a store receipt come out of the printer, and the preview matches. (Checked against a pretend printer; QR and barcodes are placeholders in the preview until phase 6 adds the on-screen encoder.) |
 | 3 ✅ | **Scanner and codes.** Scan listener, `/api/codes`, "What is this?", beeps. | Scanning anything on the hub shows a card, and scans never leak into text fields. (Tested with simulated scanner timing, including mid-code pauses; not yet with the real scanner.) |
 | 4 ✅ | **Store with scan and print.** Scan to ring up, new-item-from-barcode, member and debit cards printed and scannable, receipts, kitchen tickets, returns desk, price tags, take a number, end-of-day report. | A whole pretend shop day runs with the scanner and printer. |
-| 5 | **Spy HQ.** Badge, Code Breaker, Cipher Lab, Vault, Missions. | A grown-up can build a 5-clue mission that ends in the vault. |
-| 6 | **Standalone tools.** Scanner, QR Studio (with the on-screen QR encoder), Adding Machine. | Each works on its own with scan and print. |
+| 5 ✅ | **Spy HQ.** Badge, Code Breaker, Cipher Lab, Vault, Missions. | A grown-up can build a 5-clue mission that ends in the vault. (Tested end to end in the browser with simulated scans.) |
+| 6 ✅ | **Standalone tools.** Scanner, QR Studio (with the on-screen QR encoder), Adding Machine. | Each works on its own with scan and print. (The QR encoder matches the `qrcode` npm package bit for bit for versions 1–10 and decodes with jsQR; Code 128 matches JsBarcode. Both libraries were used only for testing, outside the project.) |
 | 7 | **Library.** | Books check out and back in with slips and optional fines. |
 | 8 | **Post Office.** | A parcel goes from counter to door sign with a label and tracking. |
 | 9 | **Box Office, checks, coupons, stock.** | Tickets sell and scan at the door; checks cash; coupons and stock work. |

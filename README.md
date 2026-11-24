@@ -10,7 +10,7 @@ A home screen of pretend-play apps for kids. The first apps are the **Store** (m
 - **Devices:** works in any browser and is tablet-first. On Android, use Chrome ⋮ → *Add to Home screen* for a full-screen app.
 
 ## Home screen
-The home screen is a grid of app tiles (Store, Bank, People) with a greeting and the time. The Store tile shows a red badge with the number of open kitchen orders. The small ⚙️ in the corner opens **Setup**.
+The home screen is a grid of app tiles (Store, Bank, People, Spy HQ, Scanner, QR Studio, Adding Machine) with a greeting and the time. The Store tile shows a red badge with the number of open kitchen orders. The small ⚙️ in the corner opens **Setup**.
 
 In **Setup → Home screen** a grown-up can hide any app tile. A hidden app still works if you go to it another way, for example from a bookmark.
 
@@ -63,6 +63,21 @@ A network receipt printer (ESC/POS on port 9100; 80 mm with 48 or 42 letters a l
 - **Status:** Setup shows whether the printer is ready, low on paper, out of paper, has its lid open, or can't be reached. The server checks every 30 seconds and before each print. A print that fails is not retried later.
 - **Preview:** every print has an on-screen preview laid out exactly like the paper. QR codes and barcodes show as placeholders there for now; the printer draws the real ones.
 
+### 🕵️ Spy HQ
+A secret-agent app, all in a dark "night ops" look.
+- **Agents:** make an agent with a 🎲 codename ("Agent Midnight Tiger"), a photo or spy face, and who they really are (top secret). Each gets a printed **badge** with a QR code. Scanning a badge anywhere in the Kids Hub logs that agent in with a big green **ACCESS GRANTED**.
+- **🔢 Code Breaker:** guess the hidden code (colors, animals or numbers; easy 3, medium 4, hard 5 symbols). After each guess, 🟢 = right symbol in the right spot, 🟡 = right symbol, wrong spot. **👥 Someone sets the code** lets a grown-up or friend pick it (and print it as a sealed slip to check at the end). Wins print a **certificate** with a rank (Rookie, Ace Agent, Master Spy), and each agent's best score is kept.
+- **🌀 Cipher Lab:** the **cipher wheel** (drag the inner ring to turn it), **backwards alphabet**, **number code** (A = 1) and **emoji code** (A is for 🍎). Write a secret or crack one. **Print secret** prints the coded message with a QR code: scanning it loads it straight back into the lab to crack. **Print key card** prints a decoder key.
+- **🔐 Vaults:** keypad safes. Kids make vaults with a secret message inside; the vault can give hints ("2 numbers are in the right spot"). Grown-ups can put **play money** inside (Setup → Spy HQ): whoever opens it puts it in a bank account, once.
+- **🗺️ Missions (scavenger hunts):** in Setup → Spy HQ, build a mission of up to 12 clue cards, or tap **⚡ Quick mission**, pick 3–8 hiding places in order, and HQ writes rhyming clues for them (every other one in cipher-wheel code, if you like). Print the clue cards, hide them, and hand over the **START HERE** card. Scanning a card shows its clue, only in order ("That's not your next clue, agent!"). Coded clues open in the Cipher Lab. The last card reveals the **vault code**. A mission log prints at the end.
+- Clue text, vault codes and prizes stay on the server: the only way to see a clue is to scan its card in order, and a prize, to open its vault. **Reset play data → Spy HQ progress** locks the vaults again and restarts missions.
+
+### 🔍 Scanner, 🔳 QR Studio, 🧮 Adding Machine
+- **🔍 Scanner:** a "what is this?" machine. On this screen every scan is explained right there: Kids Hub codes say what they are (with a button to go there). Real barcodes show their digits big, their type (EAN-13, UPC-A, EAN-8, ISBN), the country whose barcode office the company signed up with (from the first three digits, an offline table), and the **check-digit detective**, which works through the multiply-by-1-or-3 math step by step. QR codes show their text. It also counts everything scanned today and lists the latest, and prints a scan report.
+- **🔳 QR Studio:** make a code from a **message**, **emoji**, a **secret** (in Spy HQ code; scanning it opens the Cipher Lab), a **shortcut** that opens an app when scanned (stick one on the toy box!), or a **Wi-Fi card** for guests (grown-up PIN). It shows a live QR code on screen that phone cameras can read, can **show it big**, **print** it with a caption, and **save** it to a gallery. Scanning anything while QR Studio is open reads it out.
+- **🧮 Adding Machine:** big keys and a paper tape like an old shop adding machine (+, −, ×, ÷, totals marked `*`). **Money** mode shows the answer as bills and coins. Scanning a price tag (or a linked package) adds its price with its name on the tape. **Print the tape** on the receipt printer.
+- Print previews now show the **real QR codes and barcodes**, drawn by the app's own encoders (`public/lib/qr.js`, `public/lib/code128.js`), so the preview can be scanned too.
+
 ### Barcode and QR scanner
 A Bluetooth scanner paired with the tablet works anywhere in the app. It acts like a keyboard, typing the code and pressing Enter; the app spots that burst (far faster than anyone types) and treats it as a scan.
 - **Scan anything** and a **What is this?** card pops up: a receipt shows its order, who it's for, the total and whether it's paid, with a button to the kitchen orders; a person's code, a debit card, or a store item shows what it is. Real product barcodes (EAN-13, UPC-A, EAN-8, book ISBNs) show their type and whether the check digit is right. Anything else shows the text.
@@ -104,7 +119,7 @@ Typical flow: take everyone's orders on the tablet → run to his room → open 
 - **Update:** replace the files, then run `docker compose up -d --build`. Your data is untouched.
 - **Reset:** use **Reset play data** (🧹 on the Orders screen or in Setup) to clear orders, bank money, accounts, kid-added items or people. For a full wipe, stop the container and delete `db.json`. Setup also has "Clear delivered orders".
 - **Dev:** `npm run dev` serves on :8089 with data in `./data`. `npm run icons` redraws the PNG icons.
-- **Code layout:** `server.js` is the API. In the browser, `public/app.js` draws the home screen and routes to the apps. Shared helpers (state, server calls, sounds, modals, printing, scanning) are in `public/lib/`, and each app is in `public/apps/` (`store/`, `bank.js`, `people.js`, `setup.js`). The list of home-screen tiles is `public/apps/registry.js`. `public/art.js` (drawings) and `public/slip.js` (receipt layout) are shared with the server; `server/printer.js` turns slips into ESC/POS and `server/codes.js` looks up scanned codes.
+- **Code layout:** `server.js` is the API. In the browser, `public/app.js` draws the home screen and routes to the apps. Shared helpers (state, server calls, sounds, modals, printing, scanning) are in `public/lib/`, and each app is in `public/apps/` (`store/`, `spy/`, `tools/` for Scanner, QR Studio and Adding Machine, `bank.js`, `people.js`, `setup.js`). The list of home-screen tiles is `public/apps/registry.js`. `public/art.js` (drawings) and `public/slip.js` (receipt layout) are shared with the server; `server/printer.js` turns slips into ESC/POS and `server/codes.js` looks up scanned codes and `server/spy.js` has the Spy HQ routes.
 - **Risk:** an isolated container with no network or HA changes. Rolling back means `docker compose down`.
 
 ## API (for HA / scripts later)
@@ -115,7 +130,10 @@ Prices and money are in cents.
 - `GET /api/report?storeId=`: today's numbers for one store or all
 - `POST /api/queue {action: take|next|reset}`: the take-a-number queue (`GET /api/state` includes `queue: {next, serving}`)
 - Items accept `barcodes: [...]` (up to 10)
-- `GET /api/codes?c=<code>`: what a scanned code is (`kind`: person, card, receipt, ticket, item, product, test, text, gone; plus `label`, `detail`, `href`)
+- `GET /api/codes?c=<code>[&log=1]`: what a scanned code is (`kind`: person, card, receipt, ticket, item, agent, clue, secret, go, product, test, text, gone; plus `label`, `detail`, `href`). `log=1` adds it to the Scanner's list. `KH-G-<app>` codes are shortcuts (store, bank, people, spy, cipher, codebreaker, missions, vault, serving, scanner, qr, calc, home)
+- `GET /api/scanlog`: today's scan count and the latest scans
+- `POST /api/qr {kind, text, caption, emoji}` (a `wifi` code needs the PIN), `DELETE /api/qr/:id`. `GET /api/state` includes `qrCodes`
+- Spy HQ (`server/spy.js`): `GET /api/state` includes `spy` (agents, records, vaults and missions without secrets). `POST /api/spy/agents`, `PUT`/`DELETE /api/spy/agents/:id`, `POST /api/spy/records`. Vaults: `POST /api/spy/vaults` (money prizes need the PIN), `POST /api/spy/vaults/:id/try {combo}`, `/claim {accountId}`, `/lock`. Missions (PIN to build): `POST`/`PUT`/`DELETE /api/spy/missions`, `GET /api/spy/missions/:id/run?agent=`, `POST /api/spy/missions/:id/scan?agent= {clueId}`, `/reset`. `GET /api/spy/admin` (PIN) has everything, secrets included
 - `POST /api/print {slip, test?}`: print a slip (format in `public/slip.js`). No PIN, except `test: true`, which skips the daily limit. Errors: 409 off or not set up, 429 `code: limit`, 400 too long or broken, 503 `code: printer` (can't reach it, out of paper, lid open)
 - `PUT /api/printer {enabled, host, port, paper, dailyLimit, maxCm, autoReceipt, autoTicket, funLines, cut}` (PIN), `POST /api/printer/check`. `GET /api/state` includes `printer` (settings, `status`, `today`)
 - `GET /api/events`: Server-Sent Events, `change` fires on every write (this is how devices stay in sync)
@@ -127,7 +145,7 @@ Prices and money are in cents.
 - `POST /api/stores/:id/items {name, emoji, price, categoryId?, photo?}` (photo is a data: URL). Items added without the PIN stay editable without it (`PUT`/`DELETE /api/stores/:id/items/:itemId`)
 - `POST /api/customers {name, emoji, photo?}`, `PUT`/`DELETE /api/customers/:id` (no PIN)
 
-`POST /api/reset {orders?, bankMoney?, accounts?, kidItems?, people?}` (PIN) clears the chosen data.
+`POST /api/reset {orders?, bankMoney?, accounts?, kidItems?, people?, spy?, scans?}` (PIN) clears the chosen data.
 
 Setup writes (`POST/PUT/DELETE /api/stores`, `POST /api/stores/:id/reset {template}`, `PUT /api/customers`, `DELETE /api/orders?status=delivered|all`) need the `x-setup-pin` header.
 

@@ -1,6 +1,8 @@
 // Receipt printer, browser side: paper preview, black-and-white pictures, and sending slips.
 // The slip format and layout live in /slip.js (shared with the server).
 import { S, ui, esc, api, toast, openModal, drawModal, sfx } from './core.js';
+import { qrMatrix, qrSvg } from './qr.js';
+import { code128Bits, code128Svg } from './code128.js';
 
 export const Slip = globalThis.Slip;
 
@@ -117,8 +119,17 @@ export function previewHtml(slip) {
       const cls = `pl s${o.size || 1} ${o.bold ? 'b' : ''} ${o.underline ? 'u' : ''} ${o.invert ? 'inv' : ''} a-${o.align || 'left'}`;
       return o.lines.map((l) => `<div class="${cls}">${esc(l) || '&nbsp;'}</div>`).join('');
     }
-    if (o.t === 'qr') return `<div class="pq" style="width:${pct(o.size * 29)}" title="${esc(o.data)}"><span>QR</span></div>`;
-    if (o.t === 'barcode') return `<div class="pb"><i></i><span>${esc(o.data)}</span></div>`;
+    if (o.t === 'qr') {
+      try { return `<div class="pq-real" style="width:${pct(qrMatrix(o.data).length * o.size)}">${qrSvg(o.data, { quiet: 0, label: o.data })}</div>`; }
+      catch { return `<div class="pq" style="width:${pct(o.size * 29)}" title="${esc(o.data)}"><span>QR</span></div>`; }
+    }
+    if (o.t === 'barcode') {
+      try {
+        const modules = code128Bits(o.data).length;
+        const w = Math.max(1, Math.min(3, Math.floor(p.dots / (modules + 20))));
+        return `<div class="pb-real" style="width:${pct(modules * w)}">${code128Svg(o.data, { height: 50 })}</div>`;
+      } catch { return `<div class="pb"><i></i><span>${esc(o.data)}</span></div>`; }
+    }
     if (o.t === 'image') return `<div class="pi a-${o.align}"><img src="${imageUrl(o)}" style="width:${pct(o.w)}" alt=""></div>`;
     if (o.t === 'feed') return '<div class="pl">&nbsp;</div>'.repeat(o.n);
     if (o.t === 'cut') return `<div class="pcut">${p.cut === false ? 'tear here' : '✂'} - - - - - - - - - - - - - -</div>`;
@@ -167,4 +178,27 @@ export function printModal(slip, { title = '🧾 Receipt', test = false, back = 
     },
   };
   openModal(m);
+}
+
+// Text that may hold emoji (which the printer can't print as letters), drawn as one picture,
+// wrapped to the paper width.
+export function textImage(text, { size = 44, width = null } = {}) {
+  const W = round8(width || printer().dots);
+  const segs = typeof Intl !== 'undefined' && Intl.Segmenter ? [...new Intl.Segmenter().segment(text)].map((s) => s.segment) : [...text];
+  const probe = canvasOf(8, 8).getContext('2d');
+  const font = `${size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",ui-monospace,monospace`;
+  probe.font = font;
+  const lines = [];
+  let line = '';
+  for (const g of segs) {
+    if (g === '\n') { lines.push(line); line = ''; continue; }
+    if (probe.measureText(line + g).width > W - 8) { lines.push(line); line = g.trim() ? g : ''; } else line += g;
+  }
+  if (line) lines.push(line);
+  const lh = Math.round(size * 1.3);
+  const c = canvasOf(W, Math.max(lh, lines.length * lh + 8));
+  const x = c.getContext('2d');
+  x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#000';
+  lines.forEach((l, i) => x.fillText(l, W / 2, i * lh + lh / 2 + 4));
+  return ditherCanvas(c);
 }

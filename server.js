@@ -60,6 +60,7 @@ function loadDb() {
     accounts: [], transactions: [],
     hub: { hidden: [] },
     queue: { next: 1, serving: 0 },
+    qrCodes: [], scanLog: [],
     ...(loaded || {}),
   };
   db.printer = { ...PRINTER_DEFAULTS, ...(db.printer || {}) };
@@ -73,7 +74,8 @@ function defaultPeople() {
   return [{ id: newId(), name: 'Mom', emoji: '👩' }, { id: newId(), name: 'Dad', emoji: '👨' }];
 }
 
-function persist(what) {
+// quiet: save without telling every tablet to reload (for things only one screen needs, like the scan log).
+function persist(what, { quiet = false } = {}) {
   rev++;
   const snapshot = JSON.stringify(db, null, 1);
   writeChain = writeChain
@@ -83,7 +85,7 @@ function persist(what) {
       await fsp.rename(tmp, DB_FILE);
     })
     .catch((e) => console.error('saving db.json failed:', e));
-  broadcast(what);
+  if (!quiet) broadcast(what);
 }
 
 // ---------------------------------------------------------------- receipt printer
@@ -444,10 +446,17 @@ function pruneOrders() {
 }
 
 // ---------------------------------------------------------------- API
+// 🕵️ Spy HQ routes live in server/spy.js.
+const Spy = require('./server/spy.js')({
+  db: () => db, HttpError, newId, isId, clean, clamp, cents, send, readJson, requirePin, pinOk, persist,
+  addTxn, accountById, resolvePhoto, isPhotoPath,
+});
+
 async function api(req, res, url) {
   const { pathname } = url;
   const method = req.method;
   const parts = pathname.split('/').filter(Boolean); // ['api', ...]
+  if (parts[1] === 'spy' && await Spy.handle(req, res, url, parts)) return;
 
   if (pathname === '/api/events' && method === 'GET') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
@@ -460,7 +469,7 @@ async function api(req, res, url) {
   if (pathname === '/api/state' && method === 'GET') {
     return send(res, 200, {
       rev, stores: db.stores, customers: db.customers, templates: templateList(),
-      banks: db.banks, accounts: db.accounts.map(publicAccount), hub: db.hub, printer: publicPrinter(), queue: db.queue,
+      banks: db.banks, accounts: db.accounts.map(publicAccount), hub: db.hub, printer: publicPrinter(), queue: db.queue, spy: Spy.publicSpy(), qrCodes: db.qrCodes,
     });
   }
 
@@ -476,7 +485,42 @@ async function api(req, res, url) {
 
   // What is this code? (scanner) GET /api/codes?c=KH-R-ABC123
   if (pathname === '/api/codes' && method === 'GET') {
-    return send(res, 200, Codes.lookup(db, url.searchParams.get('c')));
+    const info = Codes.lookup(db, url.searchParams.get('c'));
+    if (url.searchParams.get('log') === '1' && info.code) {
+      // The Scanner app's "everything scanned today" list. Kept to the last 200 scans.
+      db.scanLog.push({ code: info.code, kind: info.kind, label: info.label, emoji: info.emoji, at: new Date().toISOString() });
+      if (db.scanLog.length > 200) db.scanLog = db.scanLog.slice(-200);
+      persist('scan', { quiet: true });
+    }
+    return send(res, 200, info);
+  }
+  if (pathname === '/api/scanlog' && method === 'GET') {
+    const day = today();
+    const todays = db.scanLog.filter((x) => new Date(x.at).toLocaleDateString('en-CA') === day);
+    return send(res, 200, { today: todays.length, log: db.scanLog.slice(-60).reverse() });
+  }
+
+  // QR Studio: saved codes. A Wi-Fi card needs the PIN (it holds the password).
+  if (pathname === '/api/qr' && method === 'POST') {
+    const b = await readJson(req);
+    const kind = ['message', 'emoji', 'secret', 'link', 'wifi'].includes(b.kind) ? b.kind : 'message';
+    if (kind === 'wifi') requirePin(req);
+    const text = String(b.text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim();
+    if (!text) throw new HttpError(400, 'Type something to put in the code');
+    if (Buffer.byteLength(text, 'utf8') > 213) throw new HttpError(400, 'That is too long for a QR code');
+    if (db.qrCodes.length >= 60) throw new HttpError(400, 'The gallery is full. Remove some first');
+    const q = { id: newId(), kind, text, caption: clean(b.caption, 60), emoji: clean(b.emoji, 16) || '🔳', at: new Date().toISOString() };
+    db.qrCodes.push(q);
+    persist('qr');
+    return send(res, 201, q);
+  }
+  if (parts[1] === 'qr' && parts.length === 3 && method === 'DELETE') {
+    const q = db.qrCodes.find((x) => x.id === parts[2]);
+    if (!q) throw new HttpError(404, 'That code is gone');
+    if (q.kind === 'wifi') requirePin(req);
+    db.qrCodes = db.qrCodes.filter((x) => x !== q);
+    persist('qr');
+    return send(res, 200, { ok: true });
   }
   // Printing needs no PIN (kids print receipts); a test print does, and skips the daily limit.
   if (pathname === '/api/print' && method === 'POST') {
@@ -590,6 +634,8 @@ async function api(req, res, url) {
       for (const a of db.accounts) a.balance = 0;
       db.transactions = [];
     }
+    if (b.spy) Spy.resetPlay();
+    if (b.scans) db.scanLog = [];
     if (b.kidItems) {
       for (const s of db.stores) {
         s.items = s.items.filter((i) => i.addedBy !== 'kid');

@@ -52,9 +52,9 @@ function viewCounter() {
     <section class="panel"><h3>✨ Extras</h3><div class="row">${EXTRAS.map(([k, e, n]) => `<button class="btn ${f.extras.includes(k) ? 'primary' : ''}" data-act="po-extra" data-k="${k}">${e} ${n} +${money(post().settings.rates[k] || 0)}</button>`).join('')}</div></section>
     <section class="panel postage"><h3>💌 Postage</h3>
       <ul class="fine-list">${cost.lines.map((l) => `<li><span>${esc(l.label)}</span><small></small><b>${money(l.amount)}</b></li>`).join('')}</ul>
-      <div class="row split"><span class="pay-total" style="font-size:24px">Total <strong style="display:inline">${money(cost.total)}</strong></span>
-        <button class="btn huge primary" style="width:auto" data-act="po-send" ${f.fromId && f.toPlaceId ? '' : 'disabled'}>💰 Pay & send</button></div>
       ${!f.fromId || !f.toPlaceId ? `<p class="muted small">${!f.fromId ? 'Pick who it is from. ' : ''}${!f.toPlaceId ? 'Pick where it goes.' : ''}</p>` : ''}</section>
+    <div class="row split dock"><span class="pay-total" style="font-size:24px">Total <strong style="display:inline">${money(cost.total)}</strong></span>
+      <button class="btn huge primary" style="width:auto" data-act="po-send" ${f.fromId && f.toPlaceId ? '' : 'disabled'}>💰 Pay & send</button></div>
   </div>`;
 }
 
@@ -228,7 +228,7 @@ export const postApp = {
     'po-extra'(el) { const f = form(); const k = el.dataset.k; f.extras = f.extras.includes(k) ? f.extras.filter((x) => x !== k) : [...f.extras, k]; sfx.pop(); render(); },
     'po-send'() { return send(); },
     'po-new'() { ui.po = null; render(); },
-    'po-label'(el) { const p = parcelById(el.dataset.id); if (p) printModal(labelSlip(p, placeById(p.toPlaceId)), { title: '🏷️ Shipping label' }); },
+    'po-label'(el) { const p = parcelById(el.dataset.id); if (p) printModal(labelSlip(p, placeById(p.toPlaceId)), { title: '🏷️ Shipping label', to: p.toPersonId || p.fromId }); },
     'po-stamps'() { printModal(stampsSlip(25, 8), { title: '🖼️ Stamps' }); },
     'po-bag'(el) { return toBag(el.dataset.id); },
     'po-unbag'(el) { setBag(bag().filter((x) => x !== el.dataset.id)); render(); },

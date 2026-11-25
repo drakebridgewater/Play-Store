@@ -147,29 +147,66 @@ export async function printSlip(slip, { test = false } = {}) {
 }
 
 // A preview with a Print button. `slip` can be one slip or a list (printed one after another).
-// `back` (optional) returns to the screen that opened it.
-export function printModal(slip, { title = '🧾 Receipt', test = false, back = null, onClose = null } = {}) {
+// `back` (optional) returns to the screen that opened it. Any slip can also go to someone's phone
+// (📱 My stuff) instead; with the printer off that's the main button. `to` (a person id) is who it's
+// for, when the screen knows.
+export function printModal(slip, { title = '🧾 Receipt', test = false, back = null, onClose = null, to = null } = {}) {
   const slips = Array.isArray(slip) ? slip : [slip];
   const m = {
-    busy: false, done: false, onClose,
+    busy: false, done: false, onClose, picking: false, sentTo: null, deal: null, // deal: which slip is being handed out, one per phone
     render() {
       const p = printer();
       const ready = canPrint();
+      const person = S.customers.find((c) => c.id === to);
+      if (m.picking) {
+        return `<div class="sheet">
+          <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
+          <h2>📲 ${m.deal != null ? `${esc(slips[m.deal].title || 'Slip')} (${m.deal + 1} of ${slips.length}): whose phone?` : 'Whose phone?'}</h2>
+          <p class="center muted">It shows up on their phone under 📱 My stuff.${m.deal != null ? ' Then it asks about the next one.' : ''}</p>
+          <div class="choices">${S.customers.map((c) => `<button class="choice" data-act="send-to" data-id="${c.id}"><span class="e">${c.photo ? `<img class="face-img" src="${esc(c.photo)}" alt="" data-emoji="${esc(c.emoji || '🙂')}">` : esc(c.emoji || '🙂')}</span>${esc(c.name)}</button>`).join('')}</div>
+          <div class="row split"><button class="btn" data-act="unpick">${m.deal != null ? '✋ Stop here' : '← Back'}</button>
+            ${slips.length > 1 && m.deal == null ? `<button class="btn" data-act="deal">🃏 One per phone (${slips.length})</button>` : ''}</div>
+        </div>`;
+      }
+      const phoneBtn = (big) => (person
+        ? `<button class="btn ${big ? 'huge primary' : ''}" ${big ? 'style="width:auto;flex:1;max-width:340px"' : ''} data-act="send-to" data-id="${person.id}" ${m.busy ? 'disabled' : ''}>📲 ${big ? `Send to ${esc(person.name)}'s phone` : 'Phone'}</button>${big ? '<button class="btn" data-act="pick">Someone else</button>' : ''}`
+        : `<button class="btn ${big ? 'huge primary' : ''}" ${big ? 'style="width:auto;flex:1;max-width:340px"' : ''} data-act="pick" ${m.busy ? 'disabled' : ''}>📲 ${big ? 'Send to a phone' : 'Phone'}</button>`);
       return `<div class="sheet print-sheet">
         <button class="btn icon close" data-act="close" aria-label="Close">✕</button>
         <h2>${title}</h2>
         <div class="paper-wrap" data-scroll="paper">${slips.map(previewHtml).join('<div class="paper-gap"></div>')}</div>
-        <p class="center muted">${statusLine(p)}${ready && !test ? ` · ${Math.max(0, p.dailyLimit - p.today)} prints left today${slips.length > 1 ? ` (this uses ${slips.length})` : ''}` : ''}</p>
+        ${ready ? `<p class="center muted">${statusLine(p)}${!test ? ` · ${Math.max(0, p.dailyLimit - p.today)} prints left today${slips.length > 1 ? ` (this uses ${slips.length})` : ''}` : ''}</p>` : ''}
+        ${m.sentTo ? `<p class="center">✅ Sent to ${m.sentTo === 'everyone' ? 'their phones' : `${esc(m.sentTo)}'s phone`} 📱</p>` : ''}
         <div class="row split">
           ${back ? '<button class="btn" data-act="back">← Back</button>' : '<span></span>'}
-          <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="print" ${ready && !m.busy ? '' : 'disabled'}>
-            ${m.busy ? '🖨️ Printing…' : m.done ? '🖨️ Print again' : `🖨️ Print${slips.length > 1 ? ` (${slips.length} slips)` : ''}`}</button>
+          ${ready || test ? `<span class="row" style="flex:1;justify-content:flex-end">${test ? '' : phoneBtn(false)}<button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="print" ${ready && !m.busy ? '' : 'disabled'}>
+            ${m.busy ? '🖨️ Printing…' : m.done ? '🖨️ Print again' : `🖨️ Print${slips.length > 1 ? ` (${slips.length} slips)` : ''}`}</button></span>`
+            : `<span class="row" style="flex:1;justify-content:flex-end">${phoneBtn(true)}</span>`}
         </div>
-        ${ready ? '' : '<p class="center muted small">This is just a preview. A grown-up can set up the printer in ⚙️ Setup.</p>'}
+        ${ready || test ? '' : `<p class="center muted small">${p.enabled === false ? '🖨️ The printer is off, so this goes to a phone instead.' : 'No printer set up yet, so this can go to a phone instead.'}</p>`}
       </div>`;
     },
-    async act(a) {
+    async act(a, el) {
       if (a === 'back') { back?.(); return; }
+      if (a === 'pick') { m.picking = true; drawModal(); return; }
+      if (a === 'unpick') { m.picking = false; m.deal = null; drawModal(); return; }
+      if (a === 'deal') { m.deal = 0; drawModal(); return; }
+      if (a === 'send-to') {
+        if (m.busy) return;
+        const dealing = m.deal != null;
+        m.busy = true; if (!dealing) m.picking = false; drawModal();
+        try {
+          const r = await api('POST', '/api/inbox', { customerId: el.dataset.id, slips: dealing ? [slips[m.deal]] : slips });
+          sfx.pop(); toast(`📲 Sent to ${r.name}'s phone`);
+          if (dealing) {
+            m.deal++;
+            if (m.deal >= slips.length) { m.deal = null; m.picking = false; m.sentTo = 'everyone'; }
+          } else m.sentTo = r.name;
+        } catch (e) { toast(e.message); }
+        m.busy = false;
+        if (ui.modal === m) drawModal();
+        return;
+      }
       if (a !== 'print' || m.busy) return;
       m.busy = true; drawModal();
       try { for (const one of slips) await printSlip(one, { test }); m.done = true; toast('🖨️ Printed!'); }

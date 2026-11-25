@@ -67,7 +67,7 @@ export function checkWriter(account, back) {
         if (!f.sig) { toast('Sign the check first ✍️'); return; }
         const check = await api('POST', '/api/checks', { fromAccountId: account.id, toCustomerId: f.to, amount: f.amount, memo: f.memo, signature: f.sig });
         await loadAll(); sfx.kaching();
-        printModal(await checkSlip(check), { title: '🧾 Print the check', back: back || null });
+        printModal(await checkSlip(check), { title: '🧾 Print the check', back: back || null, to: check.toCustomerId });
       }
     },
   };

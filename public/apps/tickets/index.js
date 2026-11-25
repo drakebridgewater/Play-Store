@@ -108,7 +108,7 @@ function viewSell(id) {
       <div class="choices">${S.customers.map((c) => `<button class="choice ${st.customerId === c.id ? 'on' : ''}" data-act="bo-who" data-id="${c.id}"><span class="e">${face(c)}</span>${esc(c.name)}</button>`).join('')}</div></section>
     <section class="panel"><h3>💺 Pick the seats</h3>${seatMap(s, st.seats)}
       <p class="center muted small">🟩 free · 🟦 picked · ⬜ sold</p></section>
-    <div class="row split"><span class="pay-total" style="font-size:24px">${st.seats.length} seat${st.seats.length === 1 ? '' : 's'} · <strong style="display:inline">${total ? money(total) : 'Free'}</strong></span>
+    <div class="row split dock"><span class="pay-total" style="font-size:24px">${st.seats.length} seat${st.seats.length === 1 ? '' : 's'} · <strong style="display:inline">${total ? money(total) : 'Free'}</strong></span>
       <button class="btn huge primary" style="width:auto" data-act="bo-buy" ${st.customerId && st.seats.length ? '' : 'disabled'}>${total ? '💰 Pay & print tickets' : '🎟️ Get the tickets'}</button></div>
   </div>`;
 }
@@ -214,7 +214,7 @@ export const ticketsApp = {
     },
     'bo-buy'() { return buy(location.hash.split('/')[3]); },
     'bo-more'() { const st = sale(location.hash.split('/')[3]); st.done = null; render(); },
-    'bo-print'() { const s = showById(location.hash.split('/')[3]); const st = ui.bo; if (s && st?.done) printModal(st.done.tickets.map((t) => ticketSlip(s, t)), { title: '🎟️ Tickets' }); },
+    'bo-print'() { const s = showById(location.hash.split('/')[3]); const st = ui.bo; if (s && st?.done) printModal(st.done.tickets.map((t) => ticketSlip(s, t)), { title: '🎟️ Tickets', to: st.done.tickets[0]?.customerId }); },
     'door-let'(el) { return admit(el.dataset.id, location.hash.split('/')[3]); },
   },
 };

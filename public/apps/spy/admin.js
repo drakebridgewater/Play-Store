@@ -4,6 +4,7 @@ import { S, ui, esc, api, toast, openModal, drawModal, closeModal, loadAll, rend
 import { printModal } from '../../lib/print.js';
 import { CIPHERS } from './ciphers.js';
 import { clueCardSlips } from './slips.js';
+import { guideModal } from './guide.js';
 
 // Hiding places with a riddle each, for quick missions. The riddle points at the place.
 const PLACES = [
@@ -43,7 +44,7 @@ export function spyPanel() {
   const { missions, vaults } = admin();
   const vname = (id) => vaults.find((v) => v.id === id)?.name;
   return `<section class="panel">
-    <h3><span class="grow">🕵️ Spy HQ missions</span><button class="btn" data-act="sp-quick">⚡ Quick mission</button><button class="btn primary" data-act="sp-mission-new">➕ New mission</button></h3>
+    <h3><span class="grow">🕵️ Spy HQ missions</span><button class="btn" data-act="sp-guide">🧑‍🏫 How it works</button><button class="btn" data-act="sp-quick">⚡ Quick mission</button><button class="btn primary" data-act="sp-mission-new">➕ New mission</button></h3>
     <p class="muted">Print the clue cards, hide them, and hand over the START HERE card. Scanning a card shows its clue, in order only. The last clue gives the vault code.</p>
     <div class="list">${missions.length ? missions.map((m) => {
       const done = m.runs.filter((r) => r.doneAt).length;
@@ -210,6 +211,7 @@ const missionOf = (el) => admin()?.missions.find((x) => x.id === el.dataset.id);
 const vaultOf = (el) => admin()?.vaults.find((x) => x.id === el.dataset.id);
 
 export const spyAdminActions = {
+  'sp-guide'() { guideModal('missions'); },
   'sp-mission-new'() { missionModal(null); },
   'sp-quick'() { quickModal(); },
   'sp-mission-edit'(el) { const m = missionOf(el); if (m) missionModal(m); },

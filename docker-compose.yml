@@ -32,6 +32,12 @@ services:
       traefik.http.services.playstore.loadbalancer.server.port: "8080"
       # LAN-only: there are no accounts, so keep it off the internet.
       traefik.http.middlewares.playstore-lan.ipallowlist.sourcerange: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # Away from home (phones on another Wi-Fi): put a login in front instead of the LAN-only rule.
+      # The app has no accounts of its own, so never open it to the internet without one. With Authelia
+      # as a Traefik forwardAuth middleware (named "authelia" here), swap the middlewares line above for:
+      #   traefik.http.routers.playstore.middlewares: authelia@docker
+      # and give Authelia an access rule for this host (one_factor or two_factor). Authelia's
+      # Remote-User / Remote-Name headers let a phone suggest "I'm Grandma" on 📱 My stuff.
 
 networks:
   proxy:

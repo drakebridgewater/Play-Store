@@ -1,5 +1,7 @@
 // ⚙️ Setup (grown-ups, PIN): stores, menus, reset.
-import { Art, COLORS, S, api, art, askConfirm, bar, clone, closeModal, drawModal, esc, loadAll, money, openModal, render, rid, setAccent, ssSet, sumOf, toast, ui } from '../lib/core.js';
+import { Art, COLORS, S, api, art, askConfirm, bar, clone, closeModal, connect, drawModal, esc, face, isKidScreen, loadAll, lsSet, money, openModal, render, rid, setAccent, ssSet, sumOf, toast, ui } from '../lib/core.js';
+import { qrSvg } from '../lib/qr.js';
+import { joinUrl } from './me.js';
 import { bankById } from './bank.js';
 import { hasKitchen, storeById } from './store/common.js';
 import { itemModal } from './store/items.js';
@@ -19,8 +21,8 @@ export function viewSetup(r) {
       <h2>Grown-ups only 🔒</h2>
       <div class="dots">${ui.pinEntry ? '●'.repeat(ui.pinEntry.length) : '<span class="hint">Enter the PIN</span>'}</div>
       <div class="keys">
-        ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pin-key" data-k="${n}">${n}</button>`).join('')}
-        <button data-act="pin-back" aria-label="Delete">⌫</button><button data-act="pin-key" data-k="0">0</button><button data-act="pin-ok">OK</button>
+        ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pin-key" data-tap data-k="${n}">${n}</button>`).join('')}
+        <button data-act="pin-back" data-tap aria-label="Delete">⌫</button><button data-act="pin-key" data-tap data-k="0">0</button><button data-act="pin-ok">OK</button>
       </div></div>`;
   }
   if (r.a === 'store' && r.b) return viewStoreEditor(r.b);
@@ -38,6 +40,7 @@ export function viewSetup(r) {
         </div>`).join('') : '<p class="muted">No stores yet. Tap “New store” and pick a template.</p>'}</div>
     </section>
     ${printerPanel()}
+    ${phonesPanel()}
     ${couponPanel()}
     ${libraryPanel()}
     ${postPanel()}
@@ -146,8 +149,8 @@ export function resetModal() {
       if (m.step === 'pin') {
         return `<div class="sheet">${x}<h2>Grown-ups only 🔒</h2>
           <div class="pinpad inline"><div class="dots">${m.pin ? '●'.repeat(m.pin.length) : '<span class="hint">Enter the PIN</span>'}</div>
-          <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pk" data-k="${n}">${n}</button>`).join('')}
-            <button data-act="pk-back" aria-label="Delete">⌫</button><button data-act="pk" data-k="0">0</button><button data-act="pin-ok">OK</button></div></div></div>`;
+          <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pk" data-tap data-k="${n}">${n}</button>`).join('')}
+            <button data-act="pk-back" data-tap aria-label="Delete">⌫</button><button data-act="pk" data-tap data-k="0">0</button><button data-act="pin-ok">OK</button></div></div></div>`;
       }
       const kid = sumOf(S.stores.map((s) => s.items.filter((i) => i.addedBy === 'kid').length));
       const inBank = sumOf(S.accounts.map((a) => a.balance));
@@ -276,6 +279,17 @@ export const setupActions = {
     printModal(await testSlip(), { title: '🧾 Test print', test: true });
   },
   'cam-toggle'(el) { setCamButton(el.checked); },
+  'kid-screen'(el) { lsSet('kidScreen', el.checked ? '1' : ''); connect(); render(); toast(el.checked ? '📲 Things sent from phones will open here' : 'This tablet won\'t get things sent from phones'); },
+  'allow-amt'(el) { allowState().amount = Number(el.dataset.v); render(); },
+  'allow-who'(el) { const st = allowState(); if (st.ids.has(el.dataset.id)) st.ids.delete(el.dataset.id); else st.ids.add(el.dataset.id); render(); },
+  async 'allow-give'() {
+    const st = allowState();
+    const ids = [...st.ids].filter((id) => S.accounts.some((a) => a.id === id));
+    if (!ids.length) { toast('Pick who gets it'); return; }
+    if (!(await askConfirm(`Give ${money(st.amount)} to ${ids.length} account${ids.length === 1 ? '' : 's'}?`, { yes: '🎁 Give it' }))) return;
+    await api('POST', '/api/allowance', { amount: st.amount, accountIds: ids }, { pin: true });
+    await loadAll(); render(); toast(`🎁 ${money(st.amount)} each is in the bank!`);
+  },
   async 'hub-toggle'(el) {
     const id = el.dataset.id;
     const hidden = S.hub.hidden.includes(id) ? S.hub.hidden.filter((x) => x !== id) : [...S.hub.hidden, id];
@@ -333,6 +347,31 @@ export const setupActions = {
 
 export const setupApp = { views: { setup: viewSetup }, actions: setupActions, onField };
 
+// ------------------------------------------------------------------ 📱 phones
+// Guests keep their cards, receipts and tickets on their own phone (📱 My stuff); "Send" on a phone
+// opens the thing on the kid's tablet as if it were scanned. Allowance tops everyone's bank up.
+function allowState() {
+  ui.allow ||= { amount: 500, ids: new Set(S.accounts.map((a) => a.id)) };
+  return ui.allow;
+}
+function phonesPanel() {
+  const st = allowState();
+  const withPhone = S.customers.filter((c) => c.phoneAt && Date.now() - Date.parse(c.phoneAt) < 14 * 86400000);
+  return `<section class="panel">
+      <h3>📱 Phones</h3>
+      <p>Grown-ups and guests can keep their bank card, receipts, tickets, library books and checks on their own phone. They hold the phone up to the scanner, or tap 📲 Send. Scan this with a phone's camera (it's also on the 🙂 People page):</p>
+      <div class="row" style="align-items:center"><div class="me-qr" style="width:180px;margin:0">${qrSvg(joinUrl(), { quiet: 4 })}</div>
+        <div class="grow"><code>${esc(joinUrl())}</code>
+        <p class="muted small">${withPhone.length ? `On a phone lately: ${withPhone.map((c) => `${face(c)} ${esc(c.name)}`).join(', ')}` : 'Nobody has opened it on a phone yet.'}</p></div></div>
+      <label class="toggle"><input type="checkbox" data-act="kid-screen" ${isKidScreen() ? 'checked' : ''}> <span><b>This tablet is the kid's screen.</b> Things sent from phones (📲 Send) open here, just like scanning them. Set this on the kid's tablet only. It's saved on this tablet.</span></label>
+      <h3>🎁 Allowance</h3>
+      ${S.accounts.length ? `<div class="row">${[100, 200, 500, 1000, 2000].map((v) => `<button class="btn ${st.amount === v ? 'primary' : ''}" data-act="allow-amt" data-v="${v}">${money(v)}</button>`).join('')}</div>
+      <div class="choices">${S.accounts.map((a) => `<button class="choice ${st.ids.has(a.id) ? 'on' : ''}" data-act="allow-who" data-id="${a.id}"><span class="e">${face(a.owner)}</span>${esc(a.owner.name)}<small>${esc(bankById(a.bankId)?.name || '')} · ${money(a.balance)}</small></button>`).join('')}</div>
+      <div class="row"><button class="btn primary" data-act="allow-give">🎁 Give ${money(st.amount)} each</button></div>`
+      : '<p class="muted">Open some bank accounts first (🏦 Bank on the home screen).</p>'}
+    </section>`;
+}
+
 // ------------------------------------------------------------------ receipt printer
 const PF_KEYS = ['enabled', 'host', 'port', 'paper', 'dailyLimit', 'maxCm', 'autoReceipt', 'autoTicket', 'funLines', 'cut'];
 async function savePrinter() {
@@ -348,7 +387,7 @@ function printerPanel() {
   return `<section class="panel">
       <h3><span class="grow">🖨️ Receipt printer</span><button class="btn" data-act="pf-check">🔄 Check</button></h3>
       <p><b>${statusLine(p)}</b>${p.status?.message && p.status.state === 'offline' ? ` <span class="muted">(${esc(p.status.message)})</span>` : ''}${p.address ? ` <span class="muted">· ${esc(p.address)}</span>` : ''}</p>
-      <label class="toggle"><input type="checkbox" data-pf="enabled" ${f.enabled ? 'checked' : ''}> Printer on</label>
+      <label class="toggle"><input type="checkbox" data-pf="enabled" ${f.enabled ? 'checked' : ''}> <span><b>Use the receipt printer.</b> Turn this off when there's no printer (on a trip): every 🖨️ Print button becomes 📲 Send to a phone, and receipts show up on people's phones (⚙️ → 📱 Phones).</span></label>
       <div class="form-grid">
         <label class="field">Printer address (IP)<input data-pf="host" value="${esc(f.host)}" maxlength="253" placeholder="${esc(p.envHost || '192.168.1.50')}" autocomplete="off" inputmode="url"></label>
         <label class="field">Port<input data-pf="port" type="number" inputmode="numeric" min="1" max="65535" value="${f.port}"></label>

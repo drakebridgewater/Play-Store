@@ -1,5 +1,5 @@
 // 🏦 Bank: banks, accounts, debit cards. No PIN.
-import { S, api, askConfirm, bar, closeModal, drawModal, esc, face, loadAll, lsGet, lsSet, money, openModal, render, route, setAccent, sfx, sumOf, toast, ui, when } from '../lib/core.js';
+import { COLORS, S, api, askConfirm, bar, closeModal, drawModal, esc, face, loadAll, lsGet, lsSet, money, openModal, render, route, setAccent, sfx, sumOf, toast, ui, when } from '../lib/core.js';
 import { breakdown, cashTray, moneyChip, pinAct, pinPad, trayAct } from '../lib/cash.js';
 import { printModal, emojiImage } from '../lib/print.js';
 import { checkWriter, cashCheckModal } from './checks.js';
@@ -268,7 +268,7 @@ export function accountModal(id) {
         toast(a === 'pin-save' ? 'New PIN saved 🔑' : 'PIN removed');
         m.go('main'); await m.reload(); return;
       }
-      if (a === 'print-card' && card) { printModal(debitCardSlip(acct, card), { title: '💳 Print the card', back: () => openModal(m) }); return; }
+      if (a === 'print-card' && card) { printModal(debitCardSlip(acct, card), { title: '💳 Print the card', back: () => openModal(m), to: acct.customerId }); return; }
       if (a === 'cut' && card) {
         if (!(await askConfirm(`Cut up the card ending in ${card.number.slice(-4)}? ✂️`, { yes: '✂️ Cut it up', danger: true }))) return;
         await api('DELETE', `/api/cards/${card.id}`);

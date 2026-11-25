@@ -5,7 +5,7 @@ import { printModal, photoImage, emojiImage } from '../lib/print.js';
 
 export function viewPeople() {
   setAccent('#9333ea');
-  return bar('🙂 People') + `<div class="setup">
+  return bar('🙂 People', '<button class="btn" data-act="me-join">📱 <span>On your phone</span></button>') + `<div class="setup">
     <p class="muted center">Tap someone to change their name or picture.</p>
     <div class="people-grid">
       ${S.customers.map((c) => `<button class="person" data-act="person" data-id="${c.id}"><span class="pic">${face(c)}</span><span>${esc(c.name)}</span></button>`).join('')}
@@ -15,7 +15,7 @@ export function viewPeople() {
 }
 
 // Add or change a person (customer) from the People page. No PIN.
-export function personModal(person) {
+export function personModal(person, { onSaved = null } = {}) {
   const f = person ? { name: person.name, emoji: person.emoji, photo: person.photo || null } : { name: '', emoji: '🙂', photo: null };
   const m = {
     busy: false,
@@ -51,7 +51,7 @@ export function personModal(person) {
         if (ui.modal === m) drawModal();
         return;
       }
-      if (a === 'member-card') { printModal(await memberCardSlip(person), { title: '🪪 Member card', back: () => openModal(m) }); return; }
+      if (a === 'member-card') { printModal(await memberCardSlip(person), { title: '🪪 Member card', back: () => openModal(m), to: person.id }); return; }
       if (a === 'delete') {
         if (!(await askConfirm(`Remove ${person.name}?`, { yes: '🗑️ Remove', danger: true }))) return;
         await api('DELETE', `/api/customers/${person.id}`);
@@ -61,12 +61,14 @@ export function personModal(person) {
       if (a === 'save') {
         if (!f.name.trim()) { toast('Type their name first ✏️'); return; }
         m.busy = true; drawModal();
+        let saved;
         try {
           const body = { ...f, name: f.name.trim() };
-          if (person) await api('PUT', `/api/customers/${person.id}`, body);
-          else await api('POST', '/api/customers', body);
+          if (person) saved = await api('PUT', `/api/customers/${person.id}`, body);
+          else saved = await api('POST', '/api/customers', body);
         } catch (e) { m.busy = false; drawModal(); throw e; }
         await loadAll(); closeModal(); render();
+        onSaved?.(saved);
         toast(person ? 'Saved ✅' : `Hi ${f.name.trim()}! 👋`);
       }
     },

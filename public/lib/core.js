@@ -186,10 +186,16 @@ export function refresh() {
   }, 60);
 }
 
+// The kid's screen (Setup → 📱 Phones, saved on this tablet) also hears "send" from phones.
+export const isKidScreen = () => lsGet('kidScreen') === '1';
+export const sendHooks = [];
+let es = null;
 export function connect() {
-  const es = new EventSource('/api/events');
+  es?.close();
+  es = new EventSource(`/api/events${isKidScreen() ? '?kid=1' : ''}`);
   es.addEventListener('change', refresh);
   es.addEventListener('hello', refresh); // also fires after a reconnect
+  es.addEventListener('send', (e) => { let d; try { d = JSON.parse(e.data); } catch { return; } for (const hook of sendHooks) hook(d); });
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 setInterval(refresh, 30_000);
@@ -206,10 +212,30 @@ export function drawModal() {
   if (!ui.modal) return;
   const keep = [...$modal.querySelectorAll('.sheet, [data-scroll]')].map((el) => [el.dataset.scroll || 'sheet', el.scrollTop]);
   $modal.innerHTML = ui.modal.render();
+  dockButtons($modal.querySelector('.sheet'));
   ui.modal.afterDraw?.($modal);
   for (const [k, top] of keep) {
     const el = k === 'sheet' ? $modal.querySelector('.sheet') : $modal.querySelector(`[data-scroll="${k}"]`);
     if (el) el.scrollTop = top;
+  }
+}
+// Pins a window's last row of buttons (the one with the big or main button, plus any small note
+// under it) to the bottom of the window, so it never needs scrolling to.
+function dockButtons(sheet) {
+  if (!sheet || sheet.querySelector('.dock')) return;
+  const kids = [...sheet.children];
+  const notes = [];
+  for (let i = kids.length - 1; i >= 0; i--) {
+    const el = kids[i];
+    if (el.matches('.btn.huge') || (el.matches('.row') && el.querySelector('.btn.huge, .btn.primary, .btn.good'))) {
+      const dock = document.createElement('div');
+      dock.className = 'dock';
+      el.before(dock);
+      dock.append(el, ...notes.reverse());
+      return;
+    }
+    if (!el.matches('p, small, .muted') || notes.length >= 2) return;
+    notes.push(el);
   }
 }
 export function closeModal() {
@@ -222,6 +248,16 @@ $modal.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el || !ui.modal) return;
   if (el.dataset.act === 'close') { closeModal(); return; }
+  if ('tap' in el.dataset && e.detail !== 0) return; // already handled on finger-down (detail 0 = keyboard)
+  Promise.resolve(ui.modal.act?.(el.dataset.act, el, e)).catch((err) => toast(err.message));
+});
+// Keys marked data-tap (the PIN pads) act the moment a finger touches them. A click needs the finger
+// to go down and up on the same button without sliding, and every key press redraws the window, so
+// quick or slightly sloppy taps were getting lost.
+$modal.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest('[data-tap]');
+  if (!el || !ui.modal || e.button > 0 || el.disabled) return;
+  e.preventDefault();
   Promise.resolve(ui.modal.act?.(el.dataset.act, el, e)).catch((err) => toast(err.message));
 });
 $modal.addEventListener('input', (e) => ui.modal?.input?.(e.target, e));

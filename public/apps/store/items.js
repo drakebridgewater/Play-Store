@@ -1,5 +1,5 @@
 // Item editor (kid and grown-up) and the sandwich / drink builders.
-import { Art, ITEM_EMOJI, api, art, askConfirm, closeModal, drawModal, esc, loadAll, money, openModal, refresh, render, rid, sfx, toast, ui } from '../../lib/core.js';
+import { $modal, Art, ITEM_EMOJI, api, art, askConfirm, closeModal, drawModal, esc, loadAll, money, openModal, refresh, render, rid, sfx, toast, ui } from '../../lib/core.js';
 import { readFile, shrinkPhoto } from '../../lib/photo.js';
 import { lookupCode, isIsbn, isProductCode } from '../../lib/lookup.js';
 import { addLine } from './cashier.js';

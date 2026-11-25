@@ -11,9 +11,9 @@ const tabs = (on) => `<a class="btn ${on === 'desk' ? 'primary' : ''}" href="#/l
   <a class="btn ${on === 'cards' ? 'primary' : ''}" href="#/library/cards">🪪 <span>Who has what</span></a>`;
 
 // Print a slip now if the library is set to, or offer it.
-function slip(s, title) {
+function slip(s, title, to = null) {
   if (lib().settings.autoSlips && canPrint()) { printSlip(s).catch((e) => toast(e.message)); return true; }
-  desk().slip = { s, title };
+  desk().slip = { s, title, to };
   return false;
 }
 
@@ -34,9 +34,9 @@ function viewDesk() {
         ${owed.length ? `<p class="lib-warn">💰 ${esc(who.name)} owes ${money(owed.reduce((a, l) => a + l.fine, 0))} in late fines. <button class="btn" data-act="lib-fines" data-id="${who.id}">Pay now</button></p>` : ''}
         ${out.length ? `<p class="muted">Already has: ${out.map((l) => `${esc(bookById(l.bookId)?.title || 'a book')}${isLate(l) ? ' (late!)' : ''}`).join(', ')}</p>` : ''}
         <ul class="lib-basket">${ses.bookIds.map((id) => { const b = bookById(id); return b ? `<li><span class="book-cover">${bookCover(b)}</span><b class="grow">${esc(b.title)}</b><button class="btn icon" data-act="lib-unpick" data-id="${id}" aria-label="Take it out">✕</button></li>` : ''; }).join('') || '<li class="muted">📷 Scan the books, or pick them from the shelf.</li>'}</ul>
-        <div class="row split"><button class="btn" data-act="lib-pick">➕ Pick from the shelf</button>
+        <div class="dock"><div class="row split"><button class="btn" data-act="lib-pick">➕ Pick from the shelf</button>
           <button class="btn huge primary" style="width:auto;flex:1;max-width:360px" data-act="lib-checkout" ${ses.bookIds.length ? '' : 'disabled'}>📤 Check out ${ses.bookIds.length || ''} book${ses.bookIds.length === 1 ? '' : 's'}</button></div>
-        <p class="muted small center">Due back ${esc(dueText(Date.now() + lib().settings.loanDays * 86400000, true))} (${lib().settings.loanDays} days)</p>
+        <p class="muted small center">Due back ${esc(dueText(Date.now() + lib().settings.loanDays * 86400000, true))} (${lib().settings.loanDays} days)</p></div>
       </section>`
     : `<section class="lib-idle"><div class="lib-idle-icon">🛎️</div>
         <h2>Scan a library card to borrow books,<br>or scan a book to bring it back.</h2>
@@ -62,7 +62,7 @@ async function checkout() {
   await loadAll();
   sfx.kaching();
   d.session = null;
-  const printed = slip(checkoutSlip(who?.name || 'Reader', books, r.dueAt), '📤 Due-date slip');
+  const printed = slip(checkoutSlip(who?.name || 'Reader', books, r.dueAt), '📤 Due-date slip', who?.id);
   d.last = { html: `<h3>📤 ${esc(who?.name || 'They')} borrowed ${books.length} book${books.length === 1 ? '' : 's'}!</h3>
     <p class="lib-due">Please bring ${books.length === 1 ? 'it' : 'them'} back by <b>${esc(dueText(r.dueAt, true))}</b></p>${printed ? '<p class="muted">🖨️ The due-date slip is printing.</p>' : ''}` };
   render();
@@ -74,7 +74,7 @@ async function giveBack(bookId) {
   const who = person(r.loan.customerId);
   await loadAll();
   const d = desk();
-  const printed = slip(thanksSlip(who?.name || 'Someone', b || { title: 'a book' }, r.loan, r.stillOut), '📥 Thank-you slip');
+  const printed = slip(thanksSlip(who?.name || 'Someone', b || { title: 'a book' }, r.loan, r.stillOut), '📥 Thank-you slip', who?.id);
   d.last = { late: !!r.loan.daysLate, html: `<h3>📥 Thanks for bringing back “${esc(b?.title || 'the book')}”!</h3>
     ${r.loan.daysLate ? `<p class="lib-late">⏰ It's ${r.loan.daysLate} day${r.loan.daysLate === 1 ? '' : 's'} late.${r.loan.fine ? ` Late fine: <b>${money(r.loan.fine)}</b> <button class="btn" data-act="lib-fines" data-id="${r.loan.customerId}">💰 Pay it</button>` : ''}</p>` : '<p>⭐ Right on time!</p>'}
     ${printed ? '<p class="muted">🖨️ The thank-you slip is printing.</p>' : ''}` };
@@ -155,7 +155,7 @@ export const libraryApp = {
     'lib-return'(el) { return giveBack(el.dataset.id); },
     async 'lib-renew'(el) { const l = await api('POST', `/api/library/loans/${el.dataset.id}/renew`); await loadAll(); sfx.pop(); render(); toast(`🔄 Renewed! Now due ${dueText(l.dueAt)}`); },
     'lib-fines'(el) { finesModal(el.dataset.id); },
-    'lib-slip'() { const s = desk().slip; if (s) printModal(s.s, { title: s.title }); },
+    'lib-slip'() { const s = desk().slip; if (s) printModal(s.s, { title: s.title, to: s.to }); },
     'lib-last-x'() { desk().last = null; desk().slip = null; render(); },
     'lib-book'(el) { const b = bookById(el.dataset.id); if (b) bookModal(b); },
     'lib-book-new'() { bookModal(null); },

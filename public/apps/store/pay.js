@@ -6,6 +6,16 @@ import { storeById } from './common.js';
 import { receiptSlip, autoReceipt } from './receipt.js';
 import { printModal } from '../../lib/print.js';
 
+// "The receipt is on Grandma's phone": whoever the order is for, or whoever paid with their card,
+// if they've opened 📱 My stuff on a phone in the last couple of weeks.
+function phoneNote(order) {
+  const recent = (c) => c?.phoneAt && Date.now() - Date.parse(c.phoneAt) < 14 * 86400000;
+  const payer = S.accounts.find((a) => a.id === order.paidWith?.accountId);
+  const people = [S.customers.find((c) => c.id === order.customerId), S.customers.find((c) => c.id === payer?.customerId)].filter(recent);
+  const names = [...new Set(people.map((c) => c.name))];
+  return names.length ? `<p class="center">📲 The receipt is on ${names.map(esc).join(' and ')}'s phone</p>` : '';
+}
+
 // checkout: a store without a kitchen. There's no "pay later"; Cancel throws the unpaid order away.
 export function payModal(order, { fresh = false, checkout = false, cardId = null } = {}) {
   const s = storeById(order.storeId);
@@ -45,7 +55,7 @@ export function payModal(order, { fresh = false, checkout = false, cardId = null
           <div class="change-box"><div class="card-slot">${debitCard(m.card.account, m.card.card, { small: true })}</div>
             <div>Paid <b>${money(order.total)}</b> with the card ending in <b>${esc(order.paidWith.last4)}</b></div>
             ${r.balanceLeft != null ? `<div>${esc(r.owner)} has <b>${money(r.balanceLeft)}</b> left in the bank 🏦</div>` : ''}</div>
-          ${m.printed ? '<p class="center muted">🖨️ Printing the receipt…</p>' : ''}
+          ${m.printed ? '<p class="center muted">🖨️ Printing the receipt…</p>' : ''}${phoneNote(order)}
           <div class="row split"><button class="btn" data-act="receipt">🧾 Receipt</button>
             <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="close">👍 Done</button></div>
         </div>`;
@@ -58,7 +68,7 @@ export function payModal(order, { fresh = false, checkout = false, cardId = null
           ${m.change > 0 ? `<div class="change-box"><div>Give back</div><strong>${money(m.change)}</strong>
               <div class="change-list">${parts.map((p) => `<span class="each">${moneyChip(p.d)} × ${p.n}</span>`).join('')}</div></div>`
             : '<div class="change-box"><strong>No change!</strong><div>They gave the exact amount 👌</div></div>'}
-          ${m.printed ? '<p class="center muted">🖨️ Printing the receipt…</p>' : ''}
+          ${m.printed ? '<p class="center muted">🖨️ Printing the receipt…</p>' : ''}${phoneNote(order)}
           <div class="row split"><button class="btn" data-act="receipt">🧾 Receipt</button>
             <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="close">👍 Done</button></div>
         </div>`;
@@ -67,7 +77,7 @@ export function payModal(order, { fresh = false, checkout = false, cardId = null
         return `<div class="sheet"><div class="celebrate">📨</div>
           <h2>Order #${order.number} went to the kitchen!</h2>
           <p class="pay-total">They'll pay later 💸</p>
-          ${m.printed ? '<p class="center muted">🖨️ Printing the receipt…</p>' : ''}
+          ${m.printed ? '<p class="center muted">🖨️ Printing the receipt…</p>' : ''}${phoneNote(order)}
           <div class="row split"><button class="btn" data-act="receipt">🧾 Receipt</button>
             <button class="btn huge primary" style="width:auto;flex:1;max-width:340px" data-act="close">👍 Done</button></div></div>`;
       }
@@ -146,7 +156,7 @@ export function payModal(order, { fresh = false, checkout = false, cardId = null
     async act(a, el) {
       if (trayAct(m, a, el)) return;
       if (a === 'receipt') {
-        printModal(receiptSlip(order, { receipt: m.receipt }), { back: () => openModal(m), onClose: () => m.onClose() });
+        printModal(receiptSlip(order, { receipt: m.receipt }), { back: () => openModal(m), onClose: () => m.onClose(), to: order.customerId });
         return;
       }
       if (pinAct(m, a, el)) { if (m.step === 'card-pin' && m.pin.length === 4) await m.charge(); return; }

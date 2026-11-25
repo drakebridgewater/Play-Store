@@ -60,7 +60,7 @@ function loadDb() {
     accounts: [], transactions: [],
     hub: { hidden: [] },
     queue: { next: 1, serving: 0 },
-    qrCodes: [], scanLog: [], coupons: [], checks: [],
+    qrCodes: [], scanLog: [], coupons: [], checks: [], inbox: [],
     ...(loaded || {}),
   };
   db.printer = { ...PRINTER_DEFAULTS, ...(db.printer || {}) };
@@ -158,6 +158,7 @@ async function printSlip(raw, { test = false } = {}) {
 
 // ---------------------------------------------------------------- live updates (SSE)
 const clients = new Set();
+const kidScreens = new Set(); // tablets marked "kid's screen" in Setup: things sent from phones go here
 function broadcast(what) {
   const msg = `event: change\ndata: ${JSON.stringify({ rev, what })}\n\n`;
   for (const res of clients) res.write(msg);
@@ -564,8 +565,77 @@ async function api(req, res, url) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
     res.write(`retry: 3000\nevent: hello\ndata: ${JSON.stringify({ rev })}\n\n`);
     clients.add(res);
-    req.on('close', () => clients.delete(res));
+    if (url.searchParams.get('kid') === '1') kidScreens.add(res);
+    req.on('close', () => { clients.delete(res); kidScreens.delete(res); });
     return;
+  }
+
+  // 📱 Phones. "Send" from a phone: the kid's screen treats the code as if it had been scanned.
+  if (pathname === '/api/send' && method === 'POST') {
+    const b = await readJson(req);
+    const code = clean(b.code, 160);
+    if (!code) throw new HttpError(400, 'Nothing to send');
+    const msg = `event: send\ndata: ${JSON.stringify({ code, from: clean(b.from, 30) || 'Someone' })}\n\n`;
+    for (const r of kidScreens) r.write(msg);
+    return send(res, 200, { ok: true, screens: kidScreens.size });
+  }
+  // Who the proxy says is logged in (Authelia sends Remote-User / Remote-Name), to suggest a name.
+  if (pathname === '/api/whoami' && method === 'GET') {
+    return send(res, 200, { user: clean(req.headers['remote-user'], 60) || null, name: clean(req.headers['remote-name'], 60) || null });
+  }
+  // One person's things for their phone: receipts (orders for them, or paid with their card) and slips sent to them.
+  if (parts[1] === 'me' && parts.length === 3 && method === 'GET') {
+    const c = db.customers.find((x) => x.id === parts[2]);
+    if (!c) throw new HttpError(404, 'Person not found');
+    const mine = new Set(db.accounts.filter((a) => a.customerId === c.id).map((a) => a.id));
+    const orders = db.orders.filter((o) => o.customerId === c.id || mine.has(o.paidWith?.accountId) || (!o.customerId && o.customer === c.name)).slice(-40).reverse();
+    return send(res, 200, { orders, inbox: db.inbox.filter((x) => x.customerId === c.id).slice().reverse() });
+  }
+  // A phone says hello: remembered so the register can say "it's on Grandma's phone".
+  if (parts[1] === 'me' && parts[3] === 'hello' && parts.length === 4 && method === 'POST') {
+    const c = db.customers.find((x) => x.id === parts[2]);
+    if (!c) throw new HttpError(404, 'Person not found');
+    if (!c.phoneAt || Date.now() - Date.parse(c.phoneAt) > 3600_000) { c.phoneAt = new Date().toISOString(); persist('state'); }
+    return send(res, 200, { ok: true });
+  }
+  // Slips sent to someone's phone instead of printed (any print window can do this).
+  if (pathname === '/api/inbox' && method === 'POST') {
+    const b = await readJson(req);
+    const person = db.customers.find((c) => c.id === b.customerId);
+    if (!person) throw new HttpError(400, 'Pick whose phone it goes to');
+    const now = new Date().toISOString();
+    const made = [];
+    for (const raw of (Array.isArray(b.slips) ? b.slips : []).slice(0, 10)) {
+      if (!raw || !Array.isArray(raw.parts) || !raw.parts.length) continue;
+      const slip = { title: clean(raw.title, 60) || 'Slip', parts: raw.parts.slice(0, 200) };
+      if (JSON.stringify(slip).length > 250_000) throw new HttpError(400, 'That slip is too big to send');
+      made.push({ id: newId(), customerId: person.id, slip, from: clean(b.from, 30) || null, at: now });
+    }
+    if (!made.length) throw new HttpError(400, 'Nothing to send');
+    db.inbox.push(...made);
+    const theirs = db.inbox.filter((x) => x.customerId === person.id);
+    if (theirs.length > 40) { const drop = new Set(theirs.slice(0, theirs.length - 40)); db.inbox = db.inbox.filter((x) => !drop.has(x)); }
+    if (db.inbox.length > 600) db.inbox = db.inbox.slice(-600);
+    persist('inbox');
+    return send(res, 201, { ok: true, count: made.length, name: person.name });
+  }
+  if (parts[1] === 'inbox' && parts.length === 3 && method === 'DELETE') {
+    db.inbox = db.inbox.filter((x) => x.id !== parts[2]);
+    persist('inbox');
+    return send(res, 200, { ok: true });
+  }
+  // 🎁 Allowance (grown-ups): the same amount into each picked account.
+  if (pathname === '/api/allowance' && method === 'POST') {
+    requirePin(req);
+    const b = await readJson(req);
+    const amount = cents(b.amount);
+    if (!amount || amount > 100_000) throw new HttpError(400, 'Pick an amount up to $1,000');
+    const ids = new Set(Array.isArray(b.accountIds) ? b.accountIds : []);
+    const list = db.accounts.filter((a) => ids.has(a.id));
+    if (!list.length) throw new HttpError(400, 'Pick who gets it');
+    for (const a of list) addTxn(a, amount, 'allowance', '🎁 Allowance');
+    persist('state');
+    return send(res, 200, { ok: true, count: list.length });
   }
 
   if (pathname === '/api/state' && method === 'GET') {
@@ -711,6 +781,7 @@ async function api(req, res, url) {
     const now = new Date().toISOString();
     const order = {
       id: newId(), number: db.nextOrderNumber++, storeId: store.id,
+      customerId: db.customers.some((c) => c.id === b.customerId) ? b.customerId : null,
       customer: clean(b.customer, 30) || 'Someone', customerEmoji: clean(b.customerEmoji, 16) || '🙂',
       customerPhoto: isPhotoPath(b.customerPhoto) ? b.customerPhoto : null,
       lines, subtotal, discount, tax, total, paid,
@@ -755,6 +826,7 @@ async function api(req, res, url) {
     if (b.post) Post.resetPlay();
     if (b.boxOffice) BoxOffice.resetPlay();
     if (b.checks) db.checks = [];
+    if (b.orders || b.people) db.inbox = [];
     if (b.orders) for (const c of db.coupons) Object.assign(c, { usedAt: null, orderId: null });
     if (b.kidItems) {
       for (const s of db.stores) {

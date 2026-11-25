@@ -52,7 +52,7 @@ export async function returnsModal(orderId) {
     async act(a, el) {
       if (a === 'rq') { const i = Number(el.dataset.i); m.qty[i] = Math.max(0, Math.min(m.left(i), (m.qty[i] || 0) + Number(el.dataset.d))); sfx.pop(); drawModal(); return; }
       if (a === 'all') { order.lines.forEach((_, i) => { m.qty[i] = m.left(i); }); drawModal(); return; }
-      if (a === 'slip') { printModal(returnSlip(order, m.refund), { title: '🧾 Return slip', back: () => openModal(m) }); return; }
+      if (a === 'slip') { printModal(returnSlip(order, m.refund), { title: '🧾 Return slip', back: () => openModal(m), to: order.customerId }); return; }
       if (a === 'refund') {
         m.busy = true; drawModal();
         try {

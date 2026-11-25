@@ -32,8 +32,8 @@ export function trayAct(m, a, el) {
 // 4-digit PIN pad used inside modals (card PINs).
 export function pinPad(entry) {
   return `<div class="pinpad inline"><div class="dots">${'●'.repeat(entry.length)}${'○'.repeat(Math.max(0, 4 - entry.length))}</div>
-    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pk" data-k="${n}">${n}</button>`).join('')}
-      <button data-act="pk-clear" aria-label="Clear">✕</button><button data-act="pk" data-k="0">0</button><button data-act="pk-back" aria-label="Delete">⌫</button></div></div>`;
+    <div class="keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-act="pk" data-tap data-k="${n}">${n}</button>`).join('')}
+      <button data-act="pk-clear" data-tap aria-label="Clear">✕</button><button data-act="pk" data-tap data-k="0">0</button><button data-act="pk-back" data-tap aria-label="Delete">⌫</button></div></div>`;
 }
 export function pinAct(m, a, el) {
   if (a === 'pk') { if (m.pin.length < 4) m.pin += el.dataset.k; sfx.pop(); drawModal(); return true; }

@@ -28,6 +28,15 @@ Tapping **Store** opens the store lobby: one big button per store (opens its reg
 - **🎟️ Coupons:** the register's **🎟️ Coupons** button makes money-off, percent-off or free-item coupons (for this store or any store) and prints them with a QR code. Scan one at the register and the discount shows in the cart and on the receipt (tax is worked out after the discount). Each coupon works once ("That coupon was already used"); cancelling the sale makes it usable again. Setup lists them for tidying up.
 - **📊 Today's report:** orders, things sold, cash and card, tax, returns, the total, cash in the drawer and the best sellers, for one store or all of them. It prints as an end-of-day slip.
 
+## 📱 Phones (My stuff)
+Grown-ups and guests can keep their own things on their phone, so the kid can scan their phone like a real card or ticket. This is handy on a trip without the receipt printer.
+- **Joining:** **Setup → 📱 Phones** (or **🙂 People → 📱 On your phone**) shows a QR code. Scan it with the phone's camera, then tap your name (or **I'm new here**). The phone remembers you and opens straight to your page from then on. If a login proxy (Authelia) sends `Remote-User` / `Remote-Name`, the matching person is suggested first.
+- **What's on it:** your bank money and **💳 debit cards**, your **🪪 member card**, **🧾 receipts** (orders for you, or paid with your card, with 👨‍🍳 Making / ✅ Ready as the kitchen works), **🎟️ tickets**, **📚 library books** and fines, **🧾 checks** written to you, and **📬 Sent to me** (slips sent to your phone instead of printed). Tap anything to show its code big. The phone dings when a new receipt or slip arrives, or when your order is ready.
+- **Two ways to hand something to the kid:** hold the code up to the scanner (Bluetooth or 📷), or tap **📲** to send it to the **kid's screen**, where it acts exactly like a scan. For a card at the register, the PIN is still typed on the tablet. Turn on **Setup → 📱 Phones → This tablet is the kid's screen** on the kid's tablet (it's saved on that tablet).
+- **Printer off:** in **Setup → Receipt printer**, untick **Use the receipt printer** when there's no printer. Every 🖨️ Print window then offers **📲 Send to a phone** instead (it picks the right person when it knows, like the customer for a receipt), and the register says "📲 The receipt is on Grandma's phone". **🃏 One per phone** hands out a set of slips, like a mission's clue cards, one person at a time. With the printer on, **📲 Phone** sits next to Print.
+- **🎁 Allowance:** **Setup → 📱 Phones** puts the same amount into each account you pick (grown-up PIN).
+- **Away from home:** the app has no accounts, so only expose it behind a login. With Traefik and Authelia, swap the LAN-only middleware for your Authelia forwardAuth middleware (see the comment in `docker-compose.yml`).
+
 ## Modes
 | Mode | Who | What |
 |---|---|---|
@@ -90,6 +99,7 @@ Mail around the house: rooms and pretend places (Grandma's House, the North Pole
 
 ### 🕵️ Spy HQ
 A secret-agent app, all in a dark "night ops" look.
+- **🧑‍🏫 Grown-ups guide:** every Spy HQ screen has a **🧑‍🏫 Grown-ups** button: what the game is, the levels, how to coach without giving the answer away, and game ideas (also in Setup → Spy HQ → **How it works**).
 - **Agents:** make an agent with a 🎲 codename ("Agent Midnight Tiger"), a photo or spy face, and who they really are (top secret). Each gets a printed **badge** with a QR code. Scanning a badge anywhere in the Kids Hub logs that agent in with a big green **ACCESS GRANTED**.
 - **🔢 Code Breaker:** guess the hidden code (colors, animals or numbers; easy 3, medium 4, hard 5 symbols). After each guess, 🟢 = right symbol in the right spot, 🟡 = right symbol, wrong spot. **👥 Someone sets the code** lets a grown-up or friend pick it (and print it as a sealed slip to check at the end). Wins print a **certificate** with a rank (Rookie, Ace Agent, Master Spy), and each agent's best score is kept.
 - **🌀 Cipher Lab:** the **cipher wheel** (drag the inner ring to turn it), **backwards alphabet**, **number code** (A = 1) and **emoji code** (A is for 🍎). Write a secret or crack one. **Print secret** prints the coded message with a QR code: scanning it loads it straight back into the lab to crack. **Print key card** prints a decoder key.

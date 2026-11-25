@@ -8,11 +8,12 @@ import { viewCodeBreaker, cbActions } from './codebreaker.js';
 import { viewCipher, cipherActions, cipherAfterRender, cipherInput, loadSecret } from './cipher.js';
 import { viewVaults, vaultActions } from './vault.js';
 import { viewMissions, missionActions, scanClue } from './missions.js';
+import { guideButton, guideModal } from './guide.js';
 
 export const spy = () => S.spy || { agents: [], records: [], vaults: [], missions: [], places: [] };
 export const agent = () => spy().agents.find((a) => a.id === lsGet('spyAgent')) || null;
 export const agentName = () => (agent() ? `Agent ${agent().codename}` : 'Mystery Agent');
-export const spyBar = (title, right = '', back = '#/spy') => `<div class="spy">${bar(title, right, back)}`;
+export const spyBar = (title, right = '', back = '#/spy') => `<div class="spy">${bar(title, right + guideButton(), back)}`;
 
 const ADJ = ['Silver', 'Shadow', 'Midnight', 'Golden', 'Secret', 'Thunder', 'Velvet', 'Ninja', 'Turbo', 'Cosmic', 'Silent', 'Sneaky', 'Lucky', 'Rocket', 'Crystal', 'Iron', 'Stealthy', 'Mighty'];
 const ANIMAL = ['Fox', 'Owl', 'Panther', 'Falcon', 'Wolf', 'Tiger', 'Gecko', 'Shark', 'Raven', 'Cobra', 'Lynx', 'Otter', 'Badger', 'Hawk', 'Penguin', 'Dragon', 'Moose', 'Octopus'];
@@ -103,7 +104,7 @@ function agentModal(old) {
         const saved = old ? await api('PUT', `/api/spy/agents/${old.id}`, f) : await api('POST', '/api/spy/agents', f);
         if (!old) lsSet('spyAgent', saved.id);
         await loadAll(); closeModal(); render();
-        if (!old) { accessGranted(saved); printModal(await badgeSlip(saved), { title: '🪪 Your agent badge' }); }
+        if (!old) { accessGranted(saved); printModal(await badgeSlip(saved), { title: '🪪 Your agent badge', to: saved.customerId }); }
       }
     },
   };
@@ -128,10 +129,11 @@ export const spyApp = {
   actions: {
     ...cbActions, ...cipherActions, ...vaultActions, ...missionActions,
     'spy-pick'(el) { lsSet('spyAgent', el.dataset.id); const a = agent(); sfx.pop(); if (a) toast(`Agent ${a.codename} is on duty 🕵️`); render(); },
+    'spy-guide'() { guideModal(); },
     'spy-switch'() { lsSet('spyAgent', ''); render(); },
     'agent-new'() { agentModal(null); },
     'agent-edit'(el) { const a = spy().agents.find((x) => x.id === el.dataset.id); if (a) agentModal(a); },
-    async 'agent-badge'(el) { const a = spy().agents.find((x) => x.id === el.dataset.id); if (a) printModal(await badgeSlip(a), { title: '🪪 Agent badge' }); },
+    async 'agent-badge'(el) { const a = spy().agents.find((x) => x.id === el.dataset.id); if (a) printModal(await badgeSlip(a), { title: '🪪 Agent badge', to: a.customerId }); },
   },
   afterRender(r) { if (r.view === 'spy' && r.a === 'cipher') cipherAfterRender(); },
   onInput(e, r) { if (r.view === 'spy' && r.a === 'cipher') cipherInput(e); },

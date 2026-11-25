@@ -1,5 +1,5 @@
 // 🧾 Cashier: the register screen, cart and who-is-it-for picker.
-import { Art, PEOPLE_EMOJI, S, api, art, bar, closeModal, drawModal, esc, face, loadAll, lsSet, money, openModal, render, route, setAccent, sfx, toast, ui } from '../../lib/core.js';
+import { $modal, Art, PEOPLE_EMOJI, S, api, art, bar, closeModal, drawModal, esc, face, loadAll, lsSet, money, openModal, render, route, setAccent, sfx, toast, ui } from '../../lib/core.js';
 import { hasKitchen, storeById, storePickerModal } from './common.js';
 import { builderModal, itemModal } from './items.js';
 import { payModal } from './pay.js';
@@ -163,7 +163,7 @@ export function customerModal(after) {
       </div>`;
     },
     done(c) {
-      ui.customer = { name: c.name, emoji: c.emoji, photo: c.photo || null };
+      ui.customer = { id: c.id, name: c.name, emoji: c.emoji, photo: c.photo || null };
       closeModal();
       render();
       after?.();
@@ -243,7 +243,7 @@ export async function sendOrder({ cardId = null } = {}) {
   const lines = cartLines(s).map((l) => ({ itemId: l.item.id, qty: l.q, recipe: l.recipe || undefined }));
   let order;
   try {
-    order = await api('POST', '/api/orders', { storeId: s.id, customer: ui.customer.name, customerEmoji: ui.customer.emoji, customerPhoto: ui.customer.photo || null, lines, couponId: ui.cart.coupon?.id });
+    order = await api('POST', '/api/orders', { storeId: s.id, customerId: ui.customer.id || null, customer: ui.customer.name, customerEmoji: ui.customer.emoji, customerPhoto: ui.customer.photo || null, lines, couponId: ui.cart.coupon?.id });
   } catch (e) {
     if (['used', 'store'].includes(e.data?.code)) { ui.cart.coupon = null; render(); }
     if (e.data?.code === 'stock') loadAll().then(render, () => {});
@@ -260,7 +260,7 @@ export function cashierScan(info, s) {
   if (info.kind === 'person') {
     const c = S.customers.find((x) => x.id === info.id);
     if (!c) return false;
-    ui.customer = { name: c.name, emoji: c.emoji, photo: c.photo || null };
+    ui.customer = { id: c.id, name: c.name, emoji: c.emoji, photo: c.photo || null };
     ui.askedCustomer = true;
     sfx.pop(); render(); toast(`This order is for ${c.name} 👋`);
     return true;

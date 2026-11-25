@@ -1,6 +1,6 @@
 // Kids Hub: tablet UI entry. Plain ES modules, no build step.
 // The home screen is a grid of apps; each app module brings its own screens (views) and button actions.
-import { $app, S, ui, esc, route, setAccent, toast, loadAll, connect, closeModal, setRenderer } from './lib/core.js';
+import { $app, S, ui, esc, route, setAccent, toast, loadAll, connect, closeModal, setRenderer, sendHooks, isKidScreen, lsGet } from './lib/core.js';
 import { APPS } from './apps/registry.js';
 import { storeApp } from './apps/store/index.js';
 import { bankApp } from './apps/bank.js';
@@ -11,11 +11,12 @@ import { toolsApp } from './apps/tools/index.js';
 import { libraryApp } from './apps/library/index.js';
 import { postApp } from './apps/post/index.js';
 import { ticketsApp } from './apps/tickets/index.js';
-import { setScanHandler, scanChip } from './lib/scan.js';
+import { meApp } from './apps/me.js';
+import { setScanHandler, scanChip, scanned } from './lib/scan.js';
 import './lib/camscan.js'; // 📷 the camera scanner button
 import { printer, statusLine } from './lib/print.js';
 
-const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, library: libraryApp, post: postApp, tickets: ticketsApp, spy: spyApp, tools: toolsApp, setup: setupApp };
+const MODULES = { store: storeApp, bank: bankApp, people: peopleApp, library: libraryApp, post: postApp, tickets: ticketsApp, me: meApp, spy: spyApp, tools: toolsApp, setup: setupApp };
 
 // Every route name ("cashier", "bank", …) maps to the app that draws it; every data-act to its handler.
 const VIEWS = {};
@@ -83,12 +84,28 @@ setScanHandler(async (info) => {
   return (await owner?.onScan?.(info, r)) || false;
 });
 
+// 📲 Something sent from a phone (My stuff → Send) acts just like scanning it here.
+sendHooks.push(({ code, from }) => {
+  if (!isKidScreen()) return;
+  toast(`📲 From ${from}`);
+  scanned(code);
+});
+
 // ------------------------------------------------------------------ events
 $app.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el || !$app.contains(el)) return;
   const fn = ACT[el.dataset.act];
   if (!fn) return;
+  e.preventDefault();
+  if ('tap' in el.dataset && e.detail !== 0) return; // already handled on finger-down
+  Promise.resolve(fn(el, e)).catch((err) => toast(err.message));
+});
+// PIN keys (data-tap) act on finger-down so quick taps aren't lost (see the modal version in core.js).
+$app.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest('[data-tap]');
+  const fn = el && ACT[el.dataset.act];
+  if (!fn || e.button > 0 || el.disabled) return;
   e.preventDefault();
   Promise.resolve(fn(el, e)).catch((err) => toast(err.message));
 });
@@ -104,6 +121,8 @@ window.addEventListener('beforeunload', (e) => { if (ui.dirty) e.preventDefault(
   try {
     await loadAll();
     ui.seen = new Set(S.orders.map((o) => o.id));
+    // A phone that belongs to someone (📱 My stuff) opens on their page instead of the kids' home screen.
+    if (lsGet('me') && !isKidScreen() && !route().view) history.replaceState(null, '', '#/me');
     render();
   } catch {
     $app.innerHTML = '<div class="center-msg"><div class="emoji">😵</div><h2>Can\'t reach the Kids Hub</h2><p class="muted">Check the Wi-Fi, then reload.</p><button class="btn primary" onclick="location.reload()">🔄 Try again</button></div>';
